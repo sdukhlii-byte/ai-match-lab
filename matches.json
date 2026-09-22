@@ -1,0 +1,7 @@
+[
+  {"home": "Spain", "away": "Argentina", "home_flag": "es", "away_flag": "ar",
+   "competition": "World Cup Final", "date": "2026-07-19"},
+  {"home": "Brentford", "away": "Chelsea",
+   "home_flag": "assets/crests/brentford.png", "away_flag": "assets/crests/chelsea.png",
+   "competition": "Premier League", "date": "2026-09-26"}
+]
