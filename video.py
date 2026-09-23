@@ -45,7 +45,10 @@ NEGATIVE = ("text changes on the poster, distorted letters, extra boxes, moving 
             "hand touching multiple boxes at once, fingers resting on or pointing at boxes, "
             "flags or icons, ghost or duplicate digits, faint digits appearing in boxes before "
             "they are written, ink appearing in the wrong box, two boxes being filled in at the "
-            "same time, digits bleeding or overlapping between rows")
+            "same time, digits bleeding or overlapping between rows, black or dark ink, ink color "
+            "that does not match the marker tip, hand freezing or holding still mid-action, idle "
+            "pauses with no writing happening, the marker hovering without touching the paper, "
+            "dead time, slow motion, the action stopping before the video ends")
 
 
 class VideoError(RuntimeError):
@@ -82,18 +85,22 @@ def build_prompt(rows: list, first_row: int, last_row: int) -> str:
         "A person's left hand rests still the entire time, holding only the far left margin of the "
         "paper — clearly outside any printed box, flag, icon or text — and never moves, never points, "
         "and never hovers over the table.\n"
-        "The right hand holds a black marker and writes ONLY the digits listed below, filling ONE "
-        "empty box at a time, strictly in this order:\n"
+        "The right hand holds a bright yellow/gold paint marker — the ink it lays down is the exact "
+        "same bright yellow color as the marker's own tip and cap, never black or dark — and writes "
+        "ONLY the digits listed below, filling ONE empty box at a time, strictly in this order:\n"
         f"{already}{order}\n"
         "Hard rules: at every moment the marker tip touches at most one single box — the one currently "
         "being written — and nothing else; it never crosses, brushes, or lingers over any other box, "
         "flag, icon, or the title. No two boxes are ever filled in at the same time, and no digit "
         "appears anywhere until the marker has actually drawn it there. Each digit is a single, "
         "confident, continuous stroke with realistic pen pressure, ink appearing exactly where the pen "
-        "tip touches — nothing more, nothing less. Every other printed element (title, flags, model "
-        "names, icons, boxes not yet reached) stays perfectly sharp and unchanged throughout. Soft "
-        "natural daylight, realistic skin and hands, subtle marker squeak sound. At the very end both "
-        "hands lift and move out of frame, leaving the completed sheet lying still."
+        "tip touches — nothing more, nothing less, and always in that same bright yellow ink. The hand "
+        "keeps moving smoothly from one box straight to the next with NO idle pause, no freezing, and no "
+        "holding still in between — the writing action fills the entire clip continuously from the first "
+        "frame to the last, finishing exactly when all the listed digits are done. Every other printed "
+        "element (title, flags, model names, icons, boxes not yet reached) stays perfectly sharp and "
+        "unchanged throughout. Soft natural daylight, realistic skin and hands, subtle marker squeak "
+        "sound. At the very end both hands lift and move out of frame, leaving the completed sheet lying still."
     )
 
 
@@ -212,7 +219,10 @@ def _payload(provider: str, first: Image.Image, last: Image.Image, prompt: str) 
         "tail_image_url": _data_uri(last),
         "duration": env_str("KLING_DURATION", "10"),
         "negative_prompt": NEGATIVE,
-        "cfg_scale": env_float("KLING_CFG", 0.6, lo=0.0, hi=1.0),
+        # выше 0.6 — жёстче следует тексту промпта (меньше пауз/отсебятины по
+        # цвету чернил и т.п.), но при слишком высоком значении движение может
+        # стать более дёрганым/менее естественным
+        "cfg_scale": env_float("KLING_CFG", 0.8, lo=0.0, hi=1.0),
     }
 
 
