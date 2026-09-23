@@ -1,4 +1,4 @@
-requests>=2.32
-Pillow>=10.4
-numpy>=1.26
-cairosvg>=2.7
+requests>=2.32,<3
+Pillow>=10.4,<12
+numpy>=1.26,<3
+cairosvg>=2.7,<3

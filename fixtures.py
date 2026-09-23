@@ -3,25 +3,42 @@ matches.json руками каждый день.
 
 Источник: football-data.org (v4) — бесплатный API с расписанием топ-лиг.
 Это ДРУГОЙ сервис, чем football-data.co.uk в stats.py (там только архивные
-CSV с результатами прошлых сезонов, будущих матчей там нет).
+CSV с результатами, будущих матчей там нет).
 
 Нужен бесплатный ключ (2 минуты, без карты):
   1. https://www.football-data.org/client/register
   2. FOOTBALL_DATA_API_KEY=<ключ из письма> в переменные окружения.
 
 Без ключа --auto просто упадёт с понятной ошибкой — сгенерировать
-несуществующие матчи он не может, а без реального ключа фикстур не достать.
+несуществующие матчи он не может.
 """
+
+from __future__ import annotations
 
 import datetime
 import logging
-import os
 
 import requests
+
+from config import env_float, env_list, require_env
 
 log = logging.getLogger("fixtures")
 
 API = "https://api.football-data.org/v4"
+HTTP_TIMEOUT = 30
+
+# football-data.org помечает будущие матчи двумя статусами: SCHEDULED (дата
+# известна, точное время — нет) и TIMED (время подтверждено). Ближайшие матчи
+# почти всегда TIMED, поэтому фильтр только по SCHEDULED пропускал как раз то,
+# что нам нужно, и --auto регулярно «не находил матчей» при полном календаре.
+UPCOMING = ("SCHEDULED", "TIMED")
+
+
+class NoFixturesFound(RuntimeError):
+    """Нет ни одного запланированного матча в окне поиска — не сбой, а нормальное
+    состояние (пауза в календаре/межсезонье): вызывающий код должен тихо
+    завершиться, а не падать и уходить в рестарт-луп."""
+
 
 # Коды соревнований football-data.org, которые стоит освещать по умолчанию —
 # топ-5 лиг + основные еврокубки. Переопределяется через FIXTURES_COMPETITIONS
@@ -29,47 +46,83 @@ API = "https://api.football-data.org/v4"
 DEFAULT_COMPETITIONS = ["PL", "PD", "SA", "BL1", "FL1", "CL", "ELC"]
 
 
-def _headers():
-    key = os.environ.get("FOOTBALL_DATA_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError(
-            "FOOTBALL_DATA_API_KEY не задан. Бесплатный ключ: "
-            "https://www.football-data.org/client/register — без него --auto "
-            "не может узнать, какие матчи реально будут (а выдумывать их нельзя)."
-        )
+def _headers() -> dict:
+    key = require_env(
+        "FOOTBALL_DATA_API_KEY",
+        "Бесплатный ключ: https://www.football-data.org/client/register — без него "
+        "--auto не может узнать, какие матчи реально будут (а выдумывать их нельзя).")
     return {"X-Auth-Token": key}
 
 
-def fetch(days_ahead: int = 3, per_run: int = 1) -> list:
-    """
-    -> [{"home","away","home_flag","away_flag","competition","date"}, ...]
+def _parse_utc(raw: str) -> datetime.datetime | None:
+    try:
+        return datetime.datetime.fromisoformat((raw or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
-    Реальные SCHEDULED-матчи из окна [сегодня, +days_ahead] по всем
-    настроенным лигам, отсортированные по дате — берём первые `per_run`
-    (самые близкие по времени, чтобы прогноз был максимально свежим).
-    """
-    codes_env = os.environ.get("FIXTURES_COMPETITIONS", "").strip()
-    codes = [c.strip().upper() for c in codes_env.split(",") if c.strip()] or DEFAULT_COMPETITIONS
 
-    today = datetime.date.today()
+def _request(params: dict) -> list[dict]:
+    try:
+        r = requests.get(f"{API}/matches", headers=_headers(), params=params, timeout=HTTP_TIMEOUT)
+    except requests.RequestException as e:
+        raise RuntimeError(f"football-data.org недоступен: {e}") from e
+
+    if r.status_code == 429:
+        raise RuntimeError("football-data.org: превышен лимит запросов "
+                           "(10/мин на бесплатном тарифе) — попробуй запустить чуть позже")
+    if r.status_code in (401, 403):
+        raise RuntimeError(
+            f"football-data.org отклонил ключ или тариф ({r.status_code}): {r.text[:200]}. "
+            "Проверь FOOTBALL_DATA_API_KEY и что все коды из FIXTURES_COMPETITIONS "
+            "доступны на бесплатном плане.")
+    r.raise_for_status()
+    try:
+        return r.json().get("matches", []) or []
+    except ValueError as e:
+        raise RuntimeError(f"football-data.org вернул не JSON: {r.text[:200]}") from e
+
+
+def fetch(days_ahead: int = 10, per_run: int = 1) -> list[dict]:
+    """
+    -> [{"home","away","home_flag","away_flag","competition","date","kickoff_utc"}, ...]
+
+    Реальные ещё не сыгранные матчи из окна [сейчас, +days_ahead] по всем
+    настроенным лигам, отсортированные по времени начала — берём первые
+    `per_run` (самые близкие, чтобы прогноз был максимально свежим).
+    """
+    codes = env_list("FIXTURES_COMPETITIONS", DEFAULT_COMPETITIONS, upper=True)
+    days_ahead = max(1, days_ahead)
+    per_run = max(1, per_run)
+    # Публиковать прогноз за пять минут до свистка бессмысленно: ролик ещё
+    # рендерится. Пропускаем всё, что начинается слишком скоро.
+    lead_hours = env_float("FIXTURES_MIN_LEAD_HOURS", 2.0, lo=0.0, hi=72.0)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    earliest = now + datetime.timedelta(hours=lead_hours)
+    today = now.date()
     params = {
         "competitions": ",".join(codes),
         "dateFrom": today.isoformat(),
         "dateTo": (today + datetime.timedelta(days=days_ahead)).isoformat(),
-        "status": "SCHEDULED",
+        # статус не фильтруем на сервере: разные планы отдают SCHEDULED/TIMED
+        # по-разному, надёжнее отфильтровать у себя
     }
-    r = requests.get(f"{API}/matches", headers=_headers(), params=params, timeout=30)
-    if r.status_code == 429:
-        raise RuntimeError("football-data.org: превышен лимит запросов (10/мин на бесплатном тарифе) — "
-                            "попробуй запустить чуть позже")
-    r.raise_for_status()
+    matches = _request(params)
 
-    matches = r.json().get("matches", [])
-    candidates = []
+    candidates, seen = [], set()
     for m in matches:
+        if (m.get("status") or "").upper() not in UPCOMING:
+            continue
         home, away = m.get("homeTeam") or {}, m.get("awayTeam") or {}
         if not home.get("name") or not away.get("name"):
+            continue  # у football-data.org бывают TBD-команды в кубковых сетках
+        kickoff = _parse_utc(m.get("utcDate", ""))
+        if kickoff is None or kickoff < earliest:
             continue
+        key = m.get("id") or (home["name"], away["name"], m.get("utcDate"))
+        if key in seen:  # один матч может прийти дважды, если лига указана в двух кодах
+            continue
+        seen.add(key)
         candidates.append({
             "home": home["name"],
             "away": away["name"],
@@ -78,22 +131,20 @@ def fetch(days_ahead: int = 3, per_run: int = 1) -> list:
             # имя турнира от football-data.org уже в том же виде,
             # что и ключи stats.LEAGUE_CODES ("Premier League", "Serie A", ...)
             "competition": (m.get("competition") or {}).get("name", ""),
-            "date": m["utcDate"][:10],
-            "_sort": m["utcDate"],
+            "date": kickoff.date().isoformat(),
+            "kickoff_utc": kickoff.isoformat(),
         })
 
     if not candidates:
-        raise RuntimeError(
-            f"Не нашёл ни одного запланированного матча за {days_ahead} дн. в лигах {codes} — "
-            "либо пауза в календаре (межсезонье/международное окно), либо лиги не те. "
-            "Увеличь FIXTURES_DAYS_AHEAD или поменяй FIXTURES_COMPETITIONS."
-        )
+        raise NoFixturesFound(
+            f"Не нашёл ни одного запланированного матча за {days_ahead} дн. в лигах {codes} "
+            f"(и не ближе чем через {lead_hours:g} ч) — либо пауза в календаре "
+            "(межсезонье/международное окно), либо лиги не те. Если это повторяется часто — "
+            "увеличь FIXTURES_DAYS_AHEAD или поменяй FIXTURES_COMPETITIONS.")
 
-    candidates.sort(key=lambda c: c["_sort"])
-    for c in candidates:
-        c.pop("_sort", None)
-
-    picked = candidates[:max(1, per_run)]
+    candidates.sort(key=lambda c: c["kickoff_utc"])
+    picked = candidates[:per_run]
     log.info("Подобрано %d матч(ей) из %d кандидатов: %s", len(picked), len(candidates),
-             "; ".join(f'{c["home"]} vs {c["away"]} ({c["competition"]}, {c["date"]})' for c in picked))
+             "; ".join(f'{c["home"]} vs {c["away"]} ({c["competition"]}, {c["date"]})'
+                       for c in picked))
     return picked

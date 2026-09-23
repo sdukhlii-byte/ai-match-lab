@@ -3,26 +3,37 @@
 Каждую модель спрашиваем отдельно и одинаково: матч, дата, турнир ->
 строгий JSON со счётом. Для моделей без встроенного поиска включается
 веб-плагин OpenRouter (WEB_SEARCH=true), чтобы учитывались свежие новости,
-травмы и составы. Perplexity ищет в вебе сам.
+травмы и составы. Perplexity ищет в вебе сама.
 
 ID моделей у OpenRouter быстро устаревают, поэтому у каждого слота есть
 «предпочтительный» id и префикс-фоллбэк: если id пропал из каталога,
 берётся самая свежая модель вендора с этим префиксом.
+
+Отказ одной модели больше не роняет весь матч: слоты опрашиваются
+независимо, а в конце проверяется, что успешных ответов хватает
+(MIN_MODELS, по умолчанию все 5).
 """
 
+from __future__ import annotations
+
+import datetime
 import json
 import logging
-import os
+import random
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
 import stats
+from config import env_bool, env_int, env_str, require_env
 
 log = logging.getLogger("predict")
 
 OPENROUTER = "https://openrouter.ai/api/v1"
+REQUEST_TIMEOUT = 180
+ATTEMPTS = 3
 
 # (подпись на бланке, ключ иконки, env-переменная, id по умолчанию, префикс-фоллбэк)
 SLOTS = [
@@ -33,7 +44,9 @@ SLOTS = [
     ("Grok", "grok", "MODEL_GROK", "x-ai/grok-4", "x-ai/grok-"),
 ]
 
-_SKIP = ("image", "audio", "vision-preview", "embed", "tts", "batch", ":free", "-mini", "-nano", "-lite")  # "-mini", а не "mini": иначе отсеется "gemini"
+# "-mini", а не "mini": иначе отсеется "gemini"
+_SKIP = ("image", "audio", "vision-preview", "embed", "tts", "batch",
+         ":free", "-mini", "-nano", "-lite")
 
 PROMPT = """You are a football analyst. Predict the exact final score (after 90 minutes plus stoppage time) of this UPCOMING match — it has not been played yet:
 
@@ -48,11 +61,29 @@ when they conflict (e.g. a key injury, a managerial change, a title already deci
 Answer ONLY with JSON, no markdown:
 {{"home_goals": <int 0-9>, "away_goals": <int 0-9>, "reason": "<one short sentence, max 20 words>"}}"""
 
+# Reasoning-модели (gpt-5, gemini-2.5-pro, grok с thinking) тратят часть
+# max_tokens на внутренние рассуждения — при низком лимите на сам JSON-ответ
+# ничего не остаётся (пустой content) или он обрезается на середине.
+# Даём большой запас и просим минимум размышлений — нам нужен только счёт.
+_REASONING = {"effort": "low", "exclude": True}
 
-def _headers():
+
+class ModelError(RuntimeError):
+    """Слот не смог выдать счёт. `fatal=True` — повторять запрос бессмысленно."""
+
+    def __init__(self, message: str, fatal: bool = False):
+        super().__init__(message)
+        self.fatal = fatal
+
+
+def _headers() -> dict:
+    key = require_env(
+        "OPENROUTER_API_KEY",
+        "Ключ OpenRouter нужен для прогнозов. Либо задай его, либо запусти "
+        'с --scores "1-2,2-1,2-2,1-0,2-1", чтобы обойтись без API.')
     return {
-        "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
-        "HTTP-Referer": "https://t.me/aimatchlab",
+        "Authorization": f"Bearer {key}",
+        "HTTP-Referer": env_str("OPENROUTER_REFERER", "https://t.me/aimatchlab"),
         "X-Title": "AI Match Lab",
     }
 
@@ -61,25 +92,27 @@ def _catalog() -> list:
     try:
         r = requests.get(f"{OPENROUTER}/models", timeout=30)
         r.raise_for_status()
-        return r.json().get("data", [])
-    except Exception as e:
+        data = r.json().get("data", [])
+        return [m for m in data if isinstance(m, dict) and m.get("id")]
+    except Exception as e:  # каталог — необязательная роскошь, без него просто берём id как есть
         log.warning("Каталог OpenRouter недоступен (%s) — беру id как есть", e)
         return []
 
 
-def resolve_models() -> list:
+def resolve_models() -> list[tuple[str, str, str]]:
     """[(label, icon, model_id)] с проверкой по каталогу OpenRouter."""
     cat = _catalog()
     ids = {m["id"] for m in cat}
     out = []
     for label, icon, env, default, prefix in SLOTS:
-        want = os.environ.get(env, "").strip() or default
+        want = env_str(env) or default
         if not cat or want in ids:
             out.append((label, icon, want))
             continue
-        cands = [m for m in cat if m["id"].startswith(prefix)
-                 and not any(s in m["id"] for s in _SKIP)]
-        cands.sort(key=lambda m: m.get("created", 0), reverse=True)
+        cands = [m for m in cat
+                 if m["id"].startswith(prefix) and not any(s in m["id"] for s in _SKIP)]
+        # "created" у некоторых записей бывает null — сравнение None с int падало
+        cands.sort(key=lambda m: m.get("created") or 0, reverse=True)
         if cands:
             log.info("%s: %s нет в каталоге, беру свежую %s", label, want, cands[0]["id"])
             out.append((label, icon, cands[0]["id"]))
@@ -89,17 +122,51 @@ def resolve_models() -> list:
     return out
 
 
-def _parse(text: str):
+# ---------------------------------------------------------------- разбор ---
+
+def _json_objects(text: str):
+    """Все сбалансированные {...} в тексте, от последнего к первому.
+
+    Старый `re.search(r"\\{.*?\\}")` брал ПЕРВУЮ пару скобок: если модель
+    сначала писала рассуждение с фигурными скобками или markdown-пример,
+    парсился мусор вместо настоящего ответа.
+    """
+    starts = [i for i, ch in enumerate(text) if ch == "{"]
+    found = []
+    for start in starts:
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    found.append(text[start:i + 1])
+                    break
+    return list(reversed(found))
+
+
+def _parse(text: str) -> tuple[int, int, str]:
     text = (text or "").strip()
-    m = re.search(r"\{.*?\}", text, re.S)
-    if m:
+    for blob in _json_objects(text):
         try:
-            data = json.loads(m.group(0))
+            data = json.loads(blob)
             h, a = int(data["home_goals"]), int(data["away_goals"])
-            if 0 <= h <= 9 and 0 <= a <= 9:
-                return h, a, str(data.get("reason", ""))[:160]
-        except Exception:
-            pass
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            continue
+        if 0 <= h <= 9 and 0 <= a <= 9:
+            return h, a, str(data.get("reason", ""))[:160].strip()
     # JSON мог обрезаться по max_tokens ещё до закрывающей скобки —
     # вытаскиваем поля по отдельности, не дожидаясь валидного объекта.
     hm = re.search(r'"home_goals"\s*:\s*(\d)', text)
@@ -110,68 +177,126 @@ def _parse(text: str):
     m = re.search(r"\b(\d)\s*[-:–]\s*(\d)\b", text)
     if m:
         return int(m.group(1)), int(m.group(2)), ""
-    raise ValueError(f"не распарсил ответ: {text[:200]!r}")
+    raise ModelError(f"не распарсил ответ: {text[:200]!r}")
 
 
-# Reasoning-модели (gpt-5, gemini-2.5-pro, grok с thinking) тратят часть
-# max_tokens на внутренние рассуждения — при низком лимите на сам JSON-ответ
-# ничего не остаётся (пустой content) или он обрезается на середине.
-# Даём большой запас и просим минимум размышлений — нам нужен только счёт,
-# не глубокий анализ, а платим за reasoning-токены так же, как за обычные.
-_REASONING = {"effort": "low", "exclude": True}
+def _build_prompt(match: dict, stats_block: str) -> str:
+    """format() только по известным полям: лишние ключи матча (home_flag,
+    scores, ...) и коллизии имён вроде match['today'] больше не ломают вызов."""
+    return PROMPT.format(
+        today=datetime.date.today().isoformat(),
+        home=match.get("home", ""),
+        away=match.get("away", ""),
+        competition=match.get("competition") or "n/a",
+        date=match.get("date") or "n/a",
+        stats_block=f"\nReal stats:\n{stats_block}\n" if stats_block else "\n",
+    )
 
 
-def ask(model: str, match: dict, web: bool, stats_block: str) -> tuple:
-    import datetime
-    prompt = PROMPT.format(**match, today=datetime.date.today().isoformat(),
-                           stats_block=f"\nReal stats:\n{stats_block}\n" if stats_block else "\n")
+# ------------------------------------------------------------------ запрос --
+
+def _fatal_status(code: int) -> bool:
+    """401/403 — плохой ключ, 400/404 — плохой запрос или несуществующая модель.
+    Повторять такое три раза бессмысленно, только тратим время прогона."""
+    return code in (400, 401, 403, 404)
+
+
+def ask(model: str, match: dict, web: bool, stats_block: str) -> tuple[int, int, str]:
+    prompt = _build_prompt(match, stats_block)
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.4,
-        "max_tokens": 1500,
+        "max_tokens": env_int("MAX_TOKENS", 1500, lo=200, hi=8000),
         "reasoning": _REASONING,
     }
+    temperature = env_str("TEMPERATURE", "0.4")
+    if temperature.lower() not in ("", "none", "off"):
+        try:
+            body["temperature"] = float(temperature.replace(",", "."))
+        except ValueError:
+            body["temperature"] = 0.4
     if web and not model.startswith("perplexity/"):
         body["plugins"] = [{"id": "web", "max_results": 4}]
-    last = None
-    for attempt in range(3):
+
+    last: Exception | None = None
+    for attempt in range(1, ATTEMPTS + 1):
         try:
             r = requests.post(f"{OPENROUTER}/chat/completions", headers=_headers(),
-                              json=body, timeout=180)
+                              json=body, timeout=REQUEST_TIMEOUT)
             if r.status_code >= 400:
-                raise RuntimeError(f"{r.status_code}: {r.text[:300]}")
-            content = r.json()["choices"][0]["message"].get("content") or ""
+                raise ModelError(f"{r.status_code}: {r.text[:300]}",
+                                 fatal=_fatal_status(r.status_code))
+            payload = r.json()
+            choices = payload.get("choices") or []
+            if not choices:
+                raise ModelError(f"пустой ответ без choices: {str(payload)[:200]}")
+            content = (choices[0].get("message") or {}).get("content") or ""
             return _parse(content)
-        except Exception as e:
+        except ModelError as e:
+            if e.fatal:
+                log.error("%s: %s — повторять бессмысленно", model, e)
+                raise
             last = e
-            log.warning("%s: попытка %d не удалась — %s", model, attempt + 1, e)
-    raise RuntimeError(f"{model}: {last}")
+        except (requests.RequestException, ValueError) as e:
+            last = e
+        log.warning("%s: попытка %d/%d не удалась — %s", model, attempt, ATTEMPTS, last)
+        if attempt < ATTEMPTS:
+            # экспоненциальная пауза с джиттером: без неё три попытки
+            # укладывались в одну секунду и упирались в тот же rate limit
+            time.sleep(min(2 ** attempt, 8) + random.uniform(0, 0.8))
+    raise ModelError(f"{model}: {last}")
 
 
-def predict_all(match: dict) -> list:
+# --------------------------------------------------------------- пайплайн ---
+
+def collect_stats_block(match: dict) -> str:
+    if not env_bool("USE_STATS", True):
+        return ""
+    try:
+        real = stats.lookup(match["home"], match["away"], match.get("competition", ""))
+        block = stats.format_for_prompt(real, match["home"], match["away"])
+        if block:
+            log.info("Статистика найдена (%s vs %s):\n%s", match["home"], match["away"], block)
+        return block
+    except Exception as e:
+        log.warning("Не удалось получить статистику: %s", e)
+        return ""
+
+
+def predict_all(match: dict) -> list[dict]:
     """
     match: {home, away, competition, date}
     -> [{"label","icon","model","home","away","reason"}] в порядке SLOTS.
     """
-    web = os.environ.get("WEB_SEARCH", "true").lower() == "true"
+    web = env_bool("WEB_SEARCH", True)
     models = resolve_models()
-
-    stats_block = ""
-    if os.environ.get("USE_STATS", "true").lower() == "true":
-        try:
-            real = stats.lookup(match["home"], match["away"], match.get("competition", ""))
-            stats_block = stats.format_for_prompt(real, match["home"], match["away"])
-            if stats_block:
-                log.info("Статистика найдена (%s vs %s):\n%s", match["home"], match["away"], stats_block)
-        except Exception as e:
-            log.warning("Не удалось получить статистику: %s", e)
+    stats_block = collect_stats_block(match)
+    min_models = env_int("MIN_MODELS", len(models), lo=1, hi=len(models))
 
     def one(slot):
         label, icon, model = slot
-        h, a, why = ask(model, match, web, stats_block)
+        try:
+            h, a, why = ask(model, match, web, stats_block)
+        except Exception as e:
+            log.error("%-10s %s — не ответила: %s", label, model, e)
+            return label, None, e
         log.info("%-10s %s  %d-%d  %s", label, model, h, a, why)
-        return {"label": label, "icon": icon, "model": model, "home": h, "away": a, "reason": why}
+        return label, {"label": label, "icon": icon, "model": model,
+                       "home": h, "away": a, "reason": why}, None
 
-    with ThreadPoolExecutor(max_workers=len(models)) as ex:
-        return list(ex.map(one, models))
+    # Слоты независимы: раньше исключение внутри ex.map() обрывало весь
+    # список, и падение одной модели стоило целого матча.
+    with ThreadPoolExecutor(max_workers=max(1, len(models))) as ex:
+        results = list(ex.map(one, models))
+
+    rows = [row for _, row, _ in results if row]
+    failures = [(label, err) for label, row, err in results if not row]
+    if len(rows) < min_models:
+        detail = "; ".join(f"{label}: {err}" for label, err in failures)
+        raise ModelError(
+            f"получено {len(rows)} прогнозов из {len(models)}, нужно минимум {min_models}. "
+            f"Отказы — {detail}")
+    if failures:
+        log.warning("Продолжаю без %s (MIN_MODELS=%d)",
+                    ", ".join(label for label, _ in failures), min_models)
+    return rows
