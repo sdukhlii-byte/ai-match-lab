@@ -99,11 +99,25 @@ def _parse(text: str):
                 return h, a, str(data.get("reason", ""))[:160]
         except Exception:
             pass
-    # запасной вариант: первое «2-1» / «2:1» в ответе
+    # JSON мог обрезаться по max_tokens ещё до закрывающей скобки —
+    # вытаскиваем поля по отдельности, не дожидаясь валидного объекта.
+    hm = re.search(r'"home_goals"\s*:\s*(\d)', text)
+    am = re.search(r'"away_goals"\s*:\s*(\d)', text)
+    if hm and am:
+        return int(hm.group(1)), int(am.group(1)), ""
+    # совсем без JSON: первое «2-1» / «2:1» в ответе
     m = re.search(r"\b(\d)\s*[-:–]\s*(\d)\b", text)
     if m:
         return int(m.group(1)), int(m.group(2)), ""
     raise ValueError(f"не распарсил ответ: {text[:200]!r}")
+
+
+# Reasoning-модели (gpt-5, gemini-2.5-pro, grok с thinking) тратят часть
+# max_tokens на внутренние рассуждения — при низком лимите на сам JSON-ответ
+# ничего не остаётся (пустой content) или он обрезается на середине.
+# Даём большой запас и просим минимум размышлений — нам нужен только счёт,
+# не глубокий анализ, а платим за reasoning-токены так же, как за обычные.
+_REASONING = {"effort": "low", "exclude": True}
 
 
 def ask(model: str, match: dict, web: bool, stats_block: str) -> tuple:
@@ -112,7 +126,8 @@ def ask(model: str, match: dict, web: bool, stats_block: str) -> tuple:
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.4,
-        "max_tokens": 400,
+        "max_tokens": 1500,
+        "reasoning": _REASONING,
     }
     if web and not model.startswith("perplexity/"):
         body["plugins"] = [{"id": "web", "max_results": 4}]
