@@ -92,7 +92,10 @@ def build_prompt(rows: list, first_row: int, last_row: int) -> str:
         "Hard rules: at every moment the marker tip touches at most one single box — the one currently "
         "being written — and nothing else; it never crosses, brushes, or lingers over any other box, "
         "flag, icon, or the title. No two boxes are ever filled in at the same time, and no digit "
-        "appears anywhere until the marker has actually drawn it there. Each digit is a single, "
+        "appears anywhere until the marker has actually drawn it there — this matters MORE than matching "
+        "the fully-filled final look quickly: a later row's digits must stay completely blank for as long "
+        "as the marker is still working on an earlier row, even though the end state already has them "
+        "filled in. Each digit is a single, "
         "confident, continuous stroke with realistic pen pressure, ink appearing exactly where the pen "
         "tip touches — nothing more, nothing less, and always in that same bright yellow ink. The hand "
         "keeps moving smoothly from one box straight to the next with NO idle pause, no freezing, and no "
@@ -219,10 +222,12 @@ def _payload(provider: str, first: Image.Image, last: Image.Image, prompt: str) 
         "tail_image_url": _data_uri(last),
         "duration": env_str("KLING_DURATION", "10"),
         "negative_prompt": NEGATIVE,
-        # выше 0.6 — жёстче следует тексту промпта (меньше пауз/отсебятины по
-        # цвету чернил и т.п.), но при слишком высоком значении движение может
-        # стать более дёрганым/менее естественным
-        "cfg_scale": env_float("KLING_CFG", 0.8, lo=0.0, hi=1.0),
+        # Пробовали поднять до 0.8 — стало хуже: модель агрессивнее "подгоняет"
+        # кадры под последний референс (уже полностью заполненный бланк) и
+        # цифры начинают появляться в клетках РАНЬШЕ, чем маркер до них
+        # долистал ("прыгает по клеткам"), вместо честного покадрового письма.
+        # Вернули дефолт на 0.6 — это, а не рост cfg, снижает "отсебятину".
+        "cfg_scale": env_float("KLING_CFG", 0.6, lo=0.0, hi=1.0),
     }
 
 
