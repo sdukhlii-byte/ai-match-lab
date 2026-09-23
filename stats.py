@@ -19,6 +19,7 @@ import csv
 import io
 import logging
 import os
+import re
 import time
 from collections import defaultdict
 
@@ -50,22 +51,46 @@ LEAGUE_CODES = {
     "jupiler pro league": "B1",
 }
 
-# Псевдонимы клубов: как встречается у пользователя/в новостях -> как в CSV.
+# Псевдонимы клубов: как встречается у пользователя/в новостях/в football-data.org
+# (fixtures.py) -> как в CSV football-data.co.uk.
 ALIASES = {
-    "man city": "Man City", "manchester city": "Man City",
+    "man city": "Man City", "manchester city": "Man City", "manchester city fc": "Man City",
     "man utd": "Man United", "manchester united": "Man United", "man united": "Man United",
-    "spurs": "Tottenham", "wolves": "Wolves",
-    "atletico madrid": "Ata. Madrid", "atletico": "Ata. Madrid",
-    "real madrid": "Real Madrid", "barcelona": "Barcelona", "barca": "Barcelona",
-    "inter": "Inter", "internazionale": "Inter", "ac milan": "Milan",
-    "psg": "Paris SG", "paris saint-germain": "Paris SG",
-    "bayern munich": "Bayern Munich", "bayern": "Bayern Munich",
+    "manchester united fc": "Man United",
+    "spurs": "Tottenham", "tottenham hotspur fc": "Tottenham", "wolves": "Wolves",
+    "wolverhampton wanderers fc": "Wolves",
+    "arsenal fc": "Arsenal", "chelsea fc": "Chelsea", "liverpool fc": "Liverpool",
+    "newcastle united fc": "Newcastle", "west ham united fc": "West Ham",
+    "aston villa fc": "Aston Villa", "brighton & hove albion fc": "Brighton",
+    "nottingham forest fc": "Nott'm Forest", "crystal palace fc": "Crystal Palace",
+    "everton fc": "Everton", "fulham fc": "Fulham", "brentford fc": "Brentford",
+    "atletico madrid": "Ata. Madrid", "atletico": "Ata. Madrid", "club atletico de madrid": "Ata. Madrid",
+    "real madrid": "Real Madrid", "real madrid cf": "Real Madrid",
+    "barcelona": "Barcelona", "barca": "Barcelona", "fc barcelona": "Barcelona",
+    "real sociedad": "Sociedad", "real sociedad de futbol sad": "Sociedad",
+    "real betis balompie sad": "Betis", "sevilla fc": "Sevilla", "villarreal cf": "Villarreal",
+    "athletic club": "Ath Bilbao", "athletic bilbao": "Ath Bilbao",
+    "valencia cf": "Valencia",
+    "inter": "Inter", "internazionale": "Inter", "fc internazionale milano": "Inter",
+    "ac milan": "Milan", "juventus fc": "Juventus", "as roma": "Roma", "roma": "Roma",
+    "ss lazio": "Lazio", "ssc napoli": "Napoli", "napoli": "Napoli",
+    "psg": "Paris SG", "paris saint-germain": "Paris SG", "paris saint-germain fc": "Paris SG",
+    "bayern munich": "Bayern Munich", "bayern": "Bayern Munich", "fc bayern munchen": "Bayern Munich",
+    "fc bayern munich": "Bayern Munich",
     "dortmund": "Dortmund", "borussia dortmund": "Dortmund",
+    "rb leipzig": "RB Leipzig", "bayer 04 leverkusen": "Leverkusen",
+    "olympique de marseille": "Marseille", "olympique lyonnais": "Lyon",
+    "as monaco fc": "Monaco",
 }
+
+# Юридические суффиксы, которые встречаются у football-data.org, но не в CSV
+# ("Arsenal FC" -> "Arsenal"). Снимаем их перед поиском по ALIASES/CSV.
+_SUFFIX_RE = re.compile(r"\s+(FC|CF|SAD|AFC|CFC)\.?$", re.I)
 
 
 def _norm(name: str) -> str:
-    return ALIASES.get(name.strip().lower(), name.strip())
+    n = _SUFFIX_RE.sub("", name.strip())
+    return ALIASES.get(n.lower(), ALIASES.get(name.strip().lower(), n))
 
 
 def league_code(competition: str) -> str | None:

@@ -7,6 +7,10 @@
   # пачка матчей из файла
   python generate.py --match-file matches.json
 
+  # без ручного списка: сам подбирает ближайшие реальные матчи (нужен
+  # FOOTBALL_DATA_API_KEY, см. fixtures.py) — это и есть команда для крона
+  python generate.py --auto
+
   # без видео (проверить бланк и промпт), или со своими цифрами без API моделей
   python generate.py ... --no-video
   python generate.py ... --scores "1-2,2-1,2-2,1-0,2-1"
@@ -31,6 +35,7 @@ import zipfile
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
+import fixtures
 import poster
 import predictions
 import video
@@ -52,6 +57,9 @@ def load_flag(spec: str, team: str) -> Image.Image:
     if spec.startswith("http"):
         r = requests.get(spec, timeout=30)
         r.raise_for_status()
+        if spec.lower().endswith(".svg") or "svg" in r.headers.get("content-type", ""):
+            import cairosvg
+            return Image.open(io.BytesIO(cairosvg.svg2png(bytestring=r.content, output_width=800)))
         return Image.open(io.BytesIO(r.content))
 
     code = spec.lower()
@@ -279,12 +287,20 @@ def main():
     ap.add_argument("--date", default="")
     ap.add_argument("--scores", default="", help='свои счета без API: "1-2,2-1,2-2,1-0,2-1"')
     ap.add_argument("--match-file", default="", help="JSON-список матчей с теми же полями")
+    ap.add_argument("--auto", action="store_true",
+                    help="не читать --match-file — самому подобрать ближайшие реальные "
+                         "матчи через football-data.org (см. fixtures.py)")
     ap.add_argument("--out", default=os.path.join(HERE, "out"))
     ap.add_argument("--no-video", action="store_true", help="только кадры, промпт и кит с картинкой")
     ap.add_argument("--no-send", action="store_true", help="не отправлять в Telegram")
     args = ap.parse_args()
 
-    if args.match_file:
+    if args.auto:
+        matches = fixtures.fetch(
+            days_ahead=int(os.environ.get("FIXTURES_DAYS_AHEAD", "3")),
+            per_run=int(os.environ.get("FIXTURES_PER_RUN", "1")),
+        )
+    elif args.match_file:
         with open(args.match_file, encoding="utf-8") as f:
             matches = json.load(f)
     elif args.home and args.away:
@@ -292,7 +308,7 @@ def main():
                     "away_flag": args.away_flag, "competition": args.competition,
                     "date": args.date, "scores": args.scores}]
     else:
-        ap.error("нужны --home/--away или --match-file")
+        ap.error("нужны --auto, --home/--away или --match-file")
 
     failed = 0
     for mt in matches:

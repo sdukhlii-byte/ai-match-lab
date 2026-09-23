@@ -33,27 +33,40 @@ PROVIDERS = {
 }
 
 NEGATIVE = ("text changes on the poster, distorted letters, extra boxes, moving paper, "
-            "camera movement, zoom, blur, extra fingers, deformed hands, watermark")
+            "camera movement, zoom, blur, extra fingers, deformed hands, watermark, "
+            "hand touching multiple boxes at once, fingers resting on or pointing at boxes, flags or icons, "
+            "ghost or duplicate digits, faint digits appearing in boxes before they are written, "
+            "ink appearing in the wrong box, two boxes being filled in at the same time, "
+            "digits bleeding or overlapping between rows")
 
 
 def build_prompt(rows: list, first_row: int, last_row: int) -> str:
     lines = []
-    for r in rows[first_row:last_row]:
-        lines.append(f'- row "{r["label"].upper()}": writes "{r["home"]}" in the left box, '
-                     f'then "{r["away"]}" in the right box')
+    for i, r in enumerate(rows[first_row:last_row], start=1):
+        lines.append(f'  {i}. Row "{r["label"].upper()}": write the single digit "{r["home"]}" inside '
+                     f'its left score box. Only after it is fully drawn, move to the right score box '
+                     f'of the SAME row and write the single digit "{r["away"]}" inside it.')
+    order = "\n".join(lines)
+    already = ("The rows above this one are already filled in with ink and stay completely unchanged — "
+               "the hand does not touch, cross over, or hover near them.\n") if first_row else ""
     return (
-        "Static top-down smartphone video of a printed \"COINPLAY AI LAB\" prediction sheet lying on a "
-        "light wooden table. The camera is locked off and does not move; the paper does not move. "
-        "A person's left hand gently holds the left edge of the paper. The right hand enters from "
-        "the right holding a black permanent marker and fills in the empty score boxes by hand, "
-        "row by row from top to bottom, with natural, confident handwriting strokes:\n"
-        + ("The rows above are already filled in and stay unchanged.\n" if first_row else "")
-        + "\n".join(lines) +
-        "\nEach digit is drawn stroke by stroke with realistic pen pressure, the ink appears exactly "
-        "where the pen tip touches. Everything else printed on the sheet (title, flags, model names, "
-        "icons) stays perfectly unchanged and sharp. Soft natural daylight, realistic skin, "
-        "subtle marker squeak sounds. At the very end the hands move out of frame, leaving the "
-        "completed sheet."
+        "Static top-down smartphone video, locked-off camera, absolutely no camera movement or zoom. "
+        "A printed \"COINPLAY AI LAB\" prediction sheet lies flat and never moves on a wooden table.\n"
+        "A person's left hand rests still the entire time, holding only the far left margin of the "
+        "paper — clearly outside any printed box, flag, icon or text — and never moves, never points, "
+        "and never hovers over the table.\n"
+        "The right hand holds a black marker and writes ONLY the digits listed below, filling ONE "
+        "empty box at a time, strictly in this order:\n"
+        f"{already}{order}\n"
+        "Hard rules: at every moment the marker tip touches at most one single box — the one currently "
+        "being written — and nothing else; it never crosses, brushes, or lingers over any other box, "
+        "flag, icon, or the title. No two boxes are ever filled in at the same time, and no digit "
+        "appears anywhere until the marker has actually drawn it there. Each digit is a single, "
+        "confident, continuous stroke with realistic pen pressure, ink appearing exactly where the pen "
+        "tip touches — nothing more, nothing less. Every other printed element (title, flags, model "
+        "names, icons, boxes not yet reached) stays perfectly sharp and unchanged throughout. Soft "
+        "natural daylight, realistic skin and hands, subtle marker squeak sound. At the very end both "
+        "hands lift and move out of frame, leaving the completed sheet lying still."
     )
 
 
