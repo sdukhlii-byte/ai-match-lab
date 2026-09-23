@@ -40,15 +40,14 @@ PROVIDERS = {
     "kling25": "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
 }
 
-NEGATIVE = ("text changes on the poster, distorted letters, extra boxes, moving paper, "
-            "camera movement, zoom, blur, extra fingers, deformed hands, watermark, "
-            "hand touching multiple boxes at once, fingers resting on or pointing at boxes, "
-            "flags or icons, ghost or duplicate digits, faint digits appearing in boxes before "
-            "they are written, ink appearing in the wrong box, two boxes being filled in at the "
-            "same time, digits bleeding or overlapping between rows, black or dark ink, ink color "
-            "that does not match the marker tip, hand freezing or holding still mid-action, idle "
-            "pauses with no writing happening, the marker hovering without touching the paper, "
-            "dead time, slow motion, the action stopping before the video ends")
+# fal у Kling режет prompt/negative_prompt на 2500 символов — держим с запасом,
+# особенно NEGATIVE (он не зависит от числа строк, а prompt растёт с ними).
+NEGATIVE = ("text changes, distorted letters, extra boxes, moving paper, camera movement, zoom, "
+            "blur, extra fingers, deformed hands, watermark, hand touching multiple boxes at once, "
+            "fingers pointing at boxes, ghost or duplicate digits, digits appearing before written, "
+            "wrong-box ink, two boxes filled at once, digits bleeding between rows, black/dark ink, "
+            "ink color not matching marker tip, hand freezing mid-action, idle pauses, marker "
+            "hovering without touching paper, dead time, action stopping before video ends")
 
 
 class VideoError(RuntimeError):
@@ -71,39 +70,31 @@ def ensure_tools() -> None:
 # ---------------------------------------------------------------- промпт ---
 
 def build_prompt(rows: list, first_row: int, last_row: int) -> str:
+    """Держим итоговую строку заметно короче 2500 символов (лимит fal/Kling на
+    поле prompt) — она растёт с числом строк в сегменте, так что текст вокруг
+    списка должен быть компактным, а не только сам список."""
     lines = []
     for i, r in enumerate(rows[first_row:last_row], start=1):
-        lines.append(f'  {i}. Row "{r["label"].upper()}": write the single digit "{r["home"]}" inside '
-                     f'its left score box. Only after it is fully drawn, move to the right score box '
-                     f'of the SAME row and write the single digit "{r["away"]}" inside it.')
+        lines.append(f'{i}. "{r["label"].upper()}": write "{r["home"]}" in its left box, then '
+                     f'"{r["away"]}" in its right box, same row.')
     order = "\n".join(lines)
-    already = ("The rows above this one are already filled in with ink and stay completely unchanged — "
-               "the hand does not touch, cross over, or hover near them.\n") if first_row else ""
+    already = ("Rows above stay already-filled and untouched.\n") if first_row else ""
     return (
-        "Static top-down smartphone video, locked-off camera, absolutely no camera movement or zoom. "
-        "A printed \"COINPLAY AI LAB\" prediction sheet lies flat and never moves on a wooden table.\n"
-        "A person's left hand rests still the entire time, holding only the far left margin of the "
-        "paper — clearly outside any printed box, flag, icon or text — and never moves, never points, "
-        "and never hovers over the table.\n"
-        "The right hand holds a bright yellow/gold paint marker — the ink it lays down is the exact "
-        "same bright yellow color as the marker's own tip and cap, never black or dark — and writes "
-        "ONLY the digits listed below, filling ONE empty box at a time, strictly in this order:\n"
+        "Static top-down locked-off smartphone shot, no camera movement or zoom. A printed "
+        "\"COINPLAY AI LAB\" prediction sheet lies flat on a wooden table, never moves.\n"
+        "Left hand rests still, holding only the far-left margin — never on a box/flag/text, never "
+        "moves or hovers elsewhere.\n"
+        "Right hand holds a bright yellow/gold marker; the ink is the SAME bright yellow as the "
+        "marker itself (never black/dark). It fills ONE empty box at a time, in this exact order:\n"
         f"{already}{order}\n"
-        "Hard rules: at every moment the marker tip touches at most one single box — the one currently "
-        "being written — and nothing else; it never crosses, brushes, or lingers over any other box, "
-        "flag, icon, or the title. No two boxes are ever filled in at the same time, and no digit "
-        "appears anywhere until the marker has actually drawn it there — this matters MORE than matching "
-        "the fully-filled final look quickly: a later row's digits must stay completely blank for as long "
-        "as the marker is still working on an earlier row, even though the end state already has them "
-        "filled in. Each digit is a single, "
-        "confident, continuous stroke with realistic pen pressure, ink appearing exactly where the pen "
-        "tip touches — nothing more, nothing less, and always in that same bright yellow ink. The hand "
-        "keeps moving smoothly from one box straight to the next with NO idle pause, no freezing, and no "
-        "holding still in between — the writing action fills the entire clip continuously from the first "
-        "frame to the last, finishing exactly when all the listed digits are done. Every other printed "
-        "element (title, flags, model names, icons, boxes not yet reached) stays perfectly sharp and "
-        "unchanged throughout. Soft natural daylight, realistic skin and hands, subtle marker squeak "
-        "sound. At the very end both hands lift and move out of frame, leaving the completed sheet lying still."
+        "Rules: marker tip touches at most one box at a time — the one being written — never "
+        "brushing others. No two boxes fill simultaneously. A digit appears ONLY once the marker has "
+        "drawn it — later rows stay blank while an earlier row is still being written, even though "
+        "the end frame already shows them filled. Each digit: one confident continuous yellow stroke, "
+        "ink exactly where the tip touches. The hand moves smoothly box to box with NO idle pause or "
+        "freezing — writing continues throughout the whole clip, finishing exactly when done. "
+        "Everything else (title, flags, icons, unreached boxes) stays sharp and unchanged. Soft "
+        "daylight, realistic hands, subtle marker squeak. At the end both hands lift out of frame."
     )
 
 

@@ -21,6 +21,7 @@ import poster          # noqa: E402
 import predictions     # noqa: E402
 import stats           # noqa: E402
 import state           # noqa: E402
+import video           # noqa: E402
 
 
 # ------------------------------------------------------------------ config --
@@ -409,6 +410,18 @@ def test_empty_rows_do_not_crash():
                      home_flag=Image.new("RGBA", (10, 10)), away_flag=Image.new("RGBA", (10, 10)),
                      rows=[])
     assert poster.render_paper(m, 0).size == (poster.PAPER_W, poster.PAPER_H)
+
+
+# ------------------------------------------------------------------ video --
+
+def test_prompt_stays_under_fal_length_limit():
+    """Регрессия: fal/Kling отклоняет prompt длиннее 2500 символов (422
+    'String should have at most 2500 characters') — с длинными именами команд
+    и всеми 5 строками в одном сегменте текст раньше вылезал за лимит."""
+    rows = [{"label": "Perplexity", "home": "2", "away": "1"} for _ in range(5)]
+    for first, last in ((0, 5), (0, 3), (3, 5)):
+        assert len(video.build_prompt(rows, first, last)) < 2500
+    assert len(video.NEGATIVE) < 2500
 
 
 if __name__ == "__main__":
