@@ -35,11 +35,12 @@ SLOTS = [
 
 _SKIP = ("image", "audio", "vision-preview", "embed", "tts", "batch", ":free", "-mini", "-nano", "-lite")  # "-mini", а не "mini": иначе отсеется "gemini"
 
-PROMPT = """You are a football analyst. Predict the exact final score (after 90 minutes plus stoppage time) of this match:
+PROMPT = """You are a football analyst. Predict the exact final score (after 90 minutes plus stoppage time) of this UPCOMING match — it has not been played yet:
 
+Today's date: {today}
 {home} vs {away}
 Competition: {competition}
-Date: {date}
+Match date: {date}
 {stats_block}
 Consider the stats above (if given) together with current form, injuries/suspensions,
 squad news, head-to-head and home advantage. Weigh recent news over historical stats
@@ -121,7 +122,9 @@ _REASONING = {"effort": "low", "exclude": True}
 
 
 def ask(model: str, match: dict, web: bool, stats_block: str) -> tuple:
-    prompt = PROMPT.format(**match, stats_block=f"\nReal stats:\n{stats_block}\n" if stats_block else "\n")
+    import datetime
+    prompt = PROMPT.format(**match, today=datetime.date.today().isoformat(),
+                           stats_block=f"\nReal stats:\n{stats_block}\n" if stats_block else "\n")
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],

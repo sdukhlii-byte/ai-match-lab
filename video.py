@@ -42,7 +42,7 @@ def build_prompt(rows: list, first_row: int, last_row: int) -> str:
         lines.append(f'- row "{r["label"].upper()}": writes "{r["home"]}" in the left box, '
                      f'then "{r["away"]}" in the right box')
     return (
-        "Static top-down smartphone video of a printed \"AI MATCH LAB\" prediction sheet lying on a "
+        "Static top-down smartphone video of a printed \"COINPLAY AI LAB\" prediction sheet lying on a "
         "light wooden table. The camera is locked off and does not move; the paper does not move. "
         "A person's left hand gently holds the left edge of the paper. The right hand enters from "
         "the right holding a black permanent marker and fills in the empty score boxes by hand, "

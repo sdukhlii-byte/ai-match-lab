@@ -19,6 +19,7 @@ TELEGRAM_CHAT_ID — zip уходит в группу, откуда его за�
 
 import argparse
 import collections
+import datetime
 import io
 import json
 import logging
@@ -148,7 +149,7 @@ def send_telegram(zpath: str, match: dict, preview: str = ""):
         log.info("TELEGRAM_BOT_TOKEN/CHAT_ID не заданы — в Telegram не отправляю")
         return
     api = f"https://api.telegram.org/bot{token}"
-    title = f'AI Match Lab · {match["home"]} vs {match["away"]}'
+    title = f'Coinplay AI Lab · {match["home"]} vs {match["away"]}'
     if preview and os.path.exists(preview) and os.path.getsize(preview) < 49 * 1024 * 1024:
         with open(preview, "rb") as f:
             requests.post(f"{api}/sendVideo", data={"chat_id": chat, "caption": title,
@@ -185,7 +186,34 @@ def _segments(n_rows: int) -> list:
     return bounds
 
 
+def _check_date(match: dict, allow_past: bool) -> None:
+    """
+    Матч с прошедшей датой уже имеет реальный результат — модели этого не
+    знают и просто нафантазируют правдоподобный "прогноз" на несуществующее
+    будущее. Останавливаем до похода к API моделей, а не постфактум.
+    """
+    raw = (match.get("date") or "").strip()
+    if not raw:
+        return
+    try:
+        d = datetime.date.fromisoformat(raw)
+    except ValueError:
+        log.warning("%s vs %s: дату %r не разобрал (нужен формат YYYY-MM-DD) — не проверяю",
+                    match["home"], match["away"], raw)
+        return
+    today = datetime.date.today()
+    if d < today:
+        msg = (f'{match["home"]} vs {match["away"]}: дата {raw} уже в прошлом '
+               f'(сегодня {today.isoformat()}) — у матча есть реальный результат, '
+               f'прогноз бессмыслен')
+        if allow_past:
+            log.warning("%s — пропускаю проверку (ALLOW_PAST_DATES=true)", msg)
+        else:
+            raise ValueError(msg)
+
+
 def run(match: dict, args) -> str:
+    _check_date(match, allow_past=os.environ.get("ALLOW_PAST_DATES", "false").lower() == "true")
     slug = slugify(f'{match["home"]}-vs-{match["away"]}-{match.get("date", "")}')
     out_dir = os.path.join(args.out, slug)
     os.makedirs(out_dir, exist_ok=True)
