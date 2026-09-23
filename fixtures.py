@@ -61,25 +61,35 @@ def _parse_utc(raw: str) -> datetime.datetime | None:
         return None
 
 
-def _request(params: dict) -> list[dict]:
+def _request(code: str, params: dict) -> list[dict]:
+    """GET /v4/competitions/{code}/matches — по одной лиге за раз.
+
+    У верхнеуровневого /v4/matches (без competition в пути) НЕТ параметра
+    `competitions` — это не задокументировано нигде, и раньше он тут просто
+    молча игнорировался API, отдавая пустой список для любого бесплатного
+    ключа. Отсюда "не нашёл ни одного матча" даже при полном календаре топ-лиг.
+    Верно — только per-competition эндпоинт (docs.football-data.org/general/v4/competition.html).
+    """
     try:
-        r = requests.get(f"{API}/matches", headers=_headers(), params=params, timeout=HTTP_TIMEOUT)
+        r = requests.get(f"{API}/competitions/{code}/matches", headers=_headers(),
+                         params=params, timeout=HTTP_TIMEOUT)
     except requests.RequestException as e:
-        raise RuntimeError(f"football-data.org недоступен: {e}") from e
+        raise RuntimeError(f"football-data.org недоступен ({code}): {e}") from e
 
     if r.status_code == 429:
         raise RuntimeError("football-data.org: превышен лимит запросов "
                            "(10/мин на бесплатном тарифе) — попробуй запустить чуть позже")
     if r.status_code in (401, 403):
         raise RuntimeError(
-            f"football-data.org отклонил ключ или тариф ({r.status_code}): {r.text[:200]}. "
-            "Проверь FOOTBALL_DATA_API_KEY и что все коды из FIXTURES_COMPETITIONS "
-            "доступны на бесплатном плане.")
+            f"football-data.org отклонил ключ или тариф для лиги {code} ({r.status_code}): "
+            f"{r.text[:200]}. Проверь FOOTBALL_DATA_API_KEY и что {code} доступен на бесплатном плане.")
+    if r.status_code == 404:
+        raise RuntimeError(f"football-data.org: код лиги {code!r} не существует")
     r.raise_for_status()
     try:
         return r.json().get("matches", []) or []
     except ValueError as e:
-        raise RuntimeError(f"football-data.org вернул не JSON: {r.text[:200]}") from e
+        raise RuntimeError(f"football-data.org вернул не JSON для {code}: {r.text[:200]}") from e
 
 
 def fetch(days_ahead: int = 10, per_run: int = 1) -> list[dict]:
@@ -101,13 +111,24 @@ def fetch(days_ahead: int = 10, per_run: int = 1) -> list[dict]:
     earliest = now + datetime.timedelta(hours=lead_hours)
     today = now.date()
     params = {
-        "competitions": ",".join(codes),
         "dateFrom": today.isoformat(),
         "dateTo": (today + datetime.timedelta(days=days_ahead)).isoformat(),
         # статус не фильтруем на сервере: разные планы отдают SCHEDULED/TIMED
         # по-разному, надёжнее отфильтровать у себя
     }
-    matches = _request(params)
+
+    matches, failed = [], []
+    for code in codes:
+        try:
+            matches.extend(_request(code, params))
+        except RuntimeError as e:
+            if "лимит запросов" in str(e):
+                raise  # общий лимит на ключ — долбить остальные коды бессмысленно
+            log.warning("%s: пропускаю лигу (%s)", code, e)
+            failed.append(code)
+    if failed and len(failed) == len(codes):
+        raise RuntimeError(f"Ни одна из лиг {codes} не ответила — см. предупреждения выше "
+                           "(неверный ключ, коды недоступны на тарифе и т.п.)")
 
     candidates, seen = [], set()
     for m in matches:

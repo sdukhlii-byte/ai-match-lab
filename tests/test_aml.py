@@ -203,7 +203,7 @@ def test_timed_matches_are_not_skipped(monkeypatch):
     а это как раз все ближайшие игры."""
     soon = (datetime.datetime.now(datetime.timezone.utc)
             + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    monkeypatch.setattr(fixtures, "_request", lambda params: [_api_match(1, "TIMED", soon)])
+    monkeypatch.setattr(fixtures, "_request", lambda code, params: [_api_match(1, "TIMED", soon)])
     got = fixtures.fetch(days_ahead=7, per_run=1)
     assert got[0]["home"] == "Arsenal FC"
 
@@ -215,22 +215,56 @@ def test_finished_and_imminent_matches_filtered(monkeypatch):
         _api_match(2, "TIMED", (now + datetime.timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ")),
         _api_match(3, "TIMED", (now + datetime.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")),
     ]
-    monkeypatch.setattr(fixtures, "_request", lambda params: rows)
+    monkeypatch.setattr(fixtures, "_request", lambda code, params: rows)
     got = fixtures.fetch(days_ahead=7, per_run=5)
     assert len(got) == 1 and got[0]["date"] == (now + datetime.timedelta(days=3)).date().isoformat()
 
 
 def test_no_fixtures_raises_dedicated_error(monkeypatch):
-    monkeypatch.setattr(fixtures, "_request", lambda params: [])
+    monkeypatch.setattr(fixtures, "_request", lambda code, params: [])
     with pytest.raises(fixtures.NoFixturesFound):
         fixtures.fetch()
+
+
+def test_fetch_queries_per_competition_endpoint(monkeypatch):
+    """Регрессия: /v4/matches?competitions=PL,PD,... не существует и молча
+    игнорирует этот параметр — правильный путь per-competition
+    /v4/competitions/{code}/matches, по одному запросу на лигу."""
+    monkeypatch.setenv("FIXTURES_COMPETITIONS", "PL,PD")
+    seen_codes = []
+
+    def fake_request(code, params):
+        seen_codes.append(code)
+        assert "competitions" not in params           # раньше протекал сюда
+        assert set(params) == {"dateFrom", "dateTo"}
+        return []
+
+    monkeypatch.setattr(fixtures, "_request", fake_request)
+    with pytest.raises(fixtures.NoFixturesFound):
+        fixtures.fetch()
+    assert seen_codes == ["PL", "PD"]                 # один запрос на каждую лигу
+
+
+def test_one_bad_competition_does_not_kill_the_others(monkeypatch):
+    when = (datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monkeypatch.setenv("FIXTURES_COMPETITIONS", "PL,ELC")
+
+    def fake_request(code, params):
+        if code == "PL":
+            raise RuntimeError("football-data.org отклонил ключ или тариф для лиги PL (403): ...")
+        return [_api_match(1, "TIMED", when)]
+
+    monkeypatch.setattr(fixtures, "_request", fake_request)
+    got = fixtures.fetch()
+    assert len(got) == 1                              # ELC всё равно нашёл матч
 
 
 def test_duplicate_matches_deduped(monkeypatch):
     when = (datetime.datetime.now(datetime.timezone.utc)
             + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
     monkeypatch.setattr(fixtures, "_request",
-                        lambda params: [_api_match(7, "TIMED", when), _api_match(7, "TIMED", when)])
+                        lambda code, params: [_api_match(7, "TIMED", when), _api_match(7, "TIMED", when)])
     assert len(fixtures.fetch(per_run=5)) == 1
 
 
