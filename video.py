@@ -7,10 +7,12 @@
 совпадают с прогнозами и подписью поста.
 
 Провайдеры (VIDEO_PROVIDER):
-  veo31   — fal-ai/veo3.1/first-last-frame-to-video (по умолчанию):
-            самый фотореалистичный, 8 сек, 9:16, со звуком маркера;
-  kling25 — fal-ai/kling-video/v2.5-turbo/pro/image-to-video + tail_image_url:
-            10 сек, дешевле, без звука.
+  kling25 — fal-ai/kling-video/v2.5-turbo/pro/image-to-video + tail_image_url
+            (по умолчанию): ~$0.70 за 10-секундный сегмент, без звука —
+            в разы дешевле veo31 при похожем качестве самой руки/письма;
+  veo31   — fal-ai/veo3.1/first-last-frame-to-video: самый фотореалистичный,
+            8 сек, 9:16, со звуком маркера, но $0.40/сек — на SEGMENTS=2
+            это ~$6.4 за ролик.
 """
 
 from __future__ import annotations
@@ -215,7 +217,7 @@ def _payload(provider: str, first: Image.Image, last: Image.Image, prompt: str) 
 
 
 def generate_segment(first: Image.Image, last: Image.Image, prompt: str, out_path: str) -> str:
-    provider = env_str("VIDEO_PROVIDER", "veo31").lower()
+    provider = env_str("VIDEO_PROVIDER", "kling25").lower()
     if provider not in PROVIDERS:
         raise VideoError(f"VIDEO_PROVIDER={provider!r} — известны только "
                          f"{', '.join(sorted(PROVIDERS))}")
