@@ -19,7 +19,7 @@ COPY . .
 # Кэш CSV и папка результатов должны быть доступны на запись непривилегированному
 # пользователю — контейнеру незачем работать от root.
 RUN useradd --create-home --uid 10001 aml \
-    && mkdir -p /app/out /app/.cache \
+    && mkdir -p /app/out /app/.cache /app/state \
     && chown -R aml:aml /app
 USER aml
 

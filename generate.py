@@ -42,6 +42,7 @@ from PIL import Image, ImageDraw, ImageFont
 import fixtures
 import poster
 import predictions
+import state
 import video
 from config import env_bool, env_float, env_int, env_str
 
@@ -449,6 +450,8 @@ def main() -> None:
         try:
             run(mt, args)
             done.append(label)
+            if mt.get("id"):  # только у матчей из --auto (fixtures.py) — иначе нечего отмечать
+                state.mark_posted(str(mt["id"]))
         except Exception as e:
             failed.append(label)
             log.exception("Матч %s не собран: %s", label, e)

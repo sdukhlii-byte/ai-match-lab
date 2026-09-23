@@ -20,6 +20,7 @@ import generate        # noqa: E402
 import poster          # noqa: E402
 import predictions     # noqa: E402
 import stats           # noqa: E402
+import state           # noqa: E402
 
 
 # ------------------------------------------------------------------ config --
@@ -266,6 +267,44 @@ def test_duplicate_matches_deduped(monkeypatch):
     monkeypatch.setattr(fixtures, "_request",
                         lambda code, params: [_api_match(7, "TIMED", when), _api_match(7, "TIMED", when)])
     assert len(fixtures.fetch(per_run=5)) == 1
+
+
+# ------------------------------------------------------- posted-state dedup --
+
+def test_already_posted_match_is_skipped(monkeypatch):
+    """Регрессия: без этого ежедневный крон присылал бы один и тот же
+    ближайший ещё не сыгранный матч каждый день подряд."""
+    when = (datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = [_api_match(1, "TIMED", when, "Arsenal FC", "Chelsea FC"),
+            _api_match(2, "TIMED", when, "Real Madrid", "Barcelona")]
+    monkeypatch.setattr(fixtures, "_request", lambda code, params: rows)
+
+    first = fixtures.fetch(per_run=1)
+    assert first[0]["home"] == "Arsenal FC"           # ближайший (тот же id) — берём первым
+    state.mark_posted(first[0]["id"])
+
+    second = fixtures.fetch(per_run=1)
+    assert second[0]["home"] == "Real Madrid"         # первый уже отмечен — пропускаем его
+
+
+def test_all_candidates_posted_raises_no_fixtures(monkeypatch):
+    when = (datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monkeypatch.setattr(fixtures, "_request", lambda code, params: [_api_match(9, "TIMED", when)])
+    state.mark_posted("9")
+    with pytest.raises(fixtures.NoFixturesFound):
+        fixtures.fetch()
+
+
+def test_skip_posted_can_be_disabled(monkeypatch):
+    when = (datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    monkeypatch.setattr(fixtures, "_request", lambda code, params: [_api_match(5, "TIMED", when)])
+    monkeypatch.setenv("FIXTURES_SKIP_POSTED", "false")
+    state.mark_posted("5")
+    got = fixtures.fetch()  # без дедупликации всё равно вернёт уже "опубликованный" матч
+    assert got[0]["home"] == "Arsenal FC"
 
 
 # ---------------------------------------------------------------- generate --

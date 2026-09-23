@@ -20,7 +20,8 @@ import logging
 
 import requests
 
-from config import env_float, env_list, require_env
+import state
+from config import env_bool, env_float, env_list, require_env
 
 log = logging.getLogger("fixtures")
 
@@ -145,11 +146,12 @@ def fetch(days_ahead: int = 10, per_run: int = 1) -> list[dict]:
         kickoff = _parse_utc(m.get("utcDate", ""))
         if kickoff is None or kickoff < earliest:
             continue
-        key = m.get("id") or (home["name"], away["name"], m.get("utcDate"))
-        if key in seen:  # один матч может прийти дважды, если лига указана в двух кодах
+        fid = str(m["id"]) if m.get("id") else f'{home["name"]}|{away["name"]}|{m.get("utcDate")}'
+        if fid in seen:  # один матч может прийти дважды, если лига указана в двух кодах
             continue
-        seen.add(key)
+        seen.add(fid)
         candidates.append({
+            "id": fid,
             "home": home["name"],
             "away": away["name"],
             "home_flag": home.get("crest") or "",
@@ -169,8 +171,25 @@ def fetch(days_ahead: int = 10, per_run: int = 1) -> list[dict]:
             "увеличь FIXTURES_DAYS_AHEAD или поменяй FIXTURES_COMPETITIONS.")
 
     candidates.sort(key=lambda c: c["kickoff_utc"])
-    picked = candidates[:per_run]
-    log.info("Подобрано %d матч(ей) из %d кандидатов: %s", len(picked), len(candidates),
+
+    # При ежедневном крон-запуске ближайший матч почти всегда остаётся тем же
+    # самым, пока не сыграется (окно и так далеко вперёд не смотрит) — без
+    # этого фильтра в группу каждый день уходил бы дубль одного прогноза.
+    if env_bool("FIXTURES_SKIP_POSTED", True):
+        posted = state.already_posted({c["id"] for c in candidates})
+        fresh = [c for c in candidates if c["id"] not in posted]
+        if not fresh:
+            raise NoFixturesFound(
+                f"Нашёл {len(candidates)} матч(ей) за {days_ahead} дн., но все уже "
+                "публиковались ранее (см. POSTED_STATE_FILE) — новых пока нет. Это нормально: "
+                "жди, пока текущие матчи сыграются и из окна поиска появятся следующие. Чтобы "
+                "отключить дедупликацию — FIXTURES_SKIP_POSTED=false.")
+    else:
+        fresh = candidates
+
+    picked = fresh[:per_run]
+    log.info("Подобрано %d матч(ей) из %d кандидатов (%d уже публиковались): %s",
+             len(picked), len(candidates), len(candidates) - len(fresh),
              "; ".join(f'{c["home"]} vs {c["away"]} ({c["competition"]}, {c["date"]})'
                        for c in picked))
     return picked
