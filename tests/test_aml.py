@@ -328,20 +328,28 @@ def test_parse_scores_errors():
     assert generate.parse_scores("2-1, 1:0, 0–0, 3-3, 1-2", 5)[2] == (0, 0)
 
 
-def test_segments_split():
-    # По умолчанию (SEGMENTS не задан) — один сегмент на строку: меньше клеток
-    # на сегмент, рука успевает физически коснуться каждой.
+def test_segments_split(monkeypatch):
+    # cyber: рук в кадре нет, поэтому сегментов нужно меньше — ролик короче
+    # (под ленту) и дешевле.
+    monkeypatch.delenv("SEGMENTS", raising=False)
+    monkeypatch.delenv("VIDEO_STYLE", raising=False)
+    assert generate._segments(5) == [(0, 2), (2, 4), (4, 5)]
+
+    # marker: руке надо доехать до каждой клетки — сегмент на строку.
+    monkeypatch.setenv("VIDEO_STYLE", "marker")
     assert generate._segments(5) == [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
-    os.environ["SEGMENTS"] = "3"
-    try:
-        assert generate._segments(5) == [(0, 2), (2, 4), (4, 5)]
-    finally:
-        del os.environ["SEGMENTS"]
-    os.environ["SEGMENTS"] = "1"
-    try:
-        assert generate._segments(5) == [(0, 5)]
-    finally:
-        del os.environ["SEGMENTS"]
+
+    monkeypatch.setenv("SEGMENTS", "1")
+    assert generate._segments(5) == [(0, 5)]
+
+
+def test_segments_respect_prefilled_start(monkeypatch):
+    """Первая строка уже заполнена на стартовом кадре, значит анимировать её
+    заново не нужно — сегменты обязаны начинаться со следующей."""
+    monkeypatch.setenv("SEGMENTS", "2")
+    assert generate._segments(5, start=1) == [(1, 3), (3, 5)]
+    # вырожденный случай: заполнено всё — анимировать нечего
+    assert generate._segments(5, start=5) == []
 
 
 def test_check_date_rejects_past():
@@ -394,13 +402,72 @@ def test_render_paper_shapes():
     assert img.size == (poster.PAPER_W, poster.PAPER_H) and img.mode == "RGB"
 
 
+def test_screen_is_phone_shaped():
+    """Экран должен быть телефонным (~9:19.5), а не A4: на бумаге неоновое
+    свечение цифр физически необъяснимо."""
+    assert 0.40 < poster.PAPER_W / poster.PAPER_H < 0.52
+
+
+def test_progress_and_verdict_light_up_only_when_ready():
+    """Полоса прогресса и вердикт — главный сигнал «ИИ досчитал».
+
+    На старте область прогресса и плашка вердикта должны отличаться от
+    финального кадра, иначе ролик не показывает никакой работы.
+    """
+    m = _match(5)
+    m.consensus = "ALPHA · 4/5"
+    start = poster.render_paper(m, filled_rows=0)
+    end = poster.render_paper(m, filled_rows=5)
+
+    bar = (poster.TABLE_X0, poster.PROGRESS_Y - 60, poster.TABLE_X1, poster.PROGRESS_Y + 20)
+    verdict = (poster.TABLE_X0, poster.CONSENSUS_Y0,
+               poster.TABLE_X1, poster.CONSENSUS_Y0 + 132)
+    assert start.crop(bar).tobytes() != end.crop(bar).tobytes()
+    assert start.crop(verdict).tobytes() != end.crop(verdict).tobytes()
+
+
+def test_hidden_verdict_is_unreadable_before_the_end():
+    """До финала вердикт стоит на месте, но контраст почти нулевой — иначе
+    ролик выдаёт ответ в первом же кадре."""
+    m = _match(5)
+    m.consensus = "ALPHA · 4/5"
+    box = (poster.TABLE_X0 + 40, poster.CONSENSUS_Y0 + 60,
+           poster.TABLE_X1 - 40, poster.CONSENSUS_Y0 + 125)
+    import numpy as np
+    dim = np.asarray(poster.render_paper(m, filled_rows=0).crop(box).convert("L"))
+    lit = np.asarray(poster.render_paper(m, filled_rows=5).crop(box).convert("L"))
+    assert dim.max() < 90          # тусклее любого читаемого текста
+    assert lit.max() > 200         # а в финале — горит
+
+
+def test_pretty_date_and_consensus_text():
+    assert generate._pretty_date("2026-10-02") == "2 OCT 2026"
+    assert generate._pretty_date("") == ""
+    assert generate._pretty_date("не дата") == "не дата"   # не роняем прогон
+
+    rows = [{"label": "A", "home": 2, "away": 1},
+            {"label": "B", "home": 1, "away": 0},
+            {"label": "C", "home": 0, "away": 2}]
+    assert generate.consensus_text(rows, "Alpha", "Beta") == "Alpha"
+    assert generate.consensus_note(rows, "Alpha", "Beta") == "2 of 3 models agree"
+    assert generate.consensus_text([], "Alpha", "Beta") == ""
+    assert generate.consensus_note([], "Alpha", "Beta") == ""
+
+
 def test_frames_are_deterministic_across_segments():
-    """Первые строки на промежуточном и финальном кадре должны совпадать
-    пиксель в пиксель, иначе на стыке сегментов цифры «прыгают»."""
+    """Уже заполненные строки не должны перерисовываться при добавлении новых,
+    иначе на стыке сегментов цифры «прыгают».
+
+    Нижние 100 px области исключаем сознательно: неоновое свечение цифры —
+    источник света, и ореол СЛЕДУЮЩЕЙ строки законно подсвечивает край
+    предыдущей. Сами цифры при этом обязаны совпадать пиксель в пиксель.
+    """
     m = _match(4)
     partial = poster.render_paper(m, filled_rows=2)
     full = poster.render_paper(m, filled_rows=4)
-    top = (0, poster.TABLE_Y0, poster.PAPER_W, poster.TABLE_Y0 + 2 * poster.ROW_H)
+    glow_bleed = 100
+    top = (0, poster.TABLE_Y0,
+           poster.PAPER_W, poster.TABLE_Y0 + 2 * poster.ROW_H - glow_bleed)
     assert partial.crop(top).tobytes() == full.crop(top).tobytes()
 
 
@@ -528,6 +595,39 @@ def test_or_submit_payload_shape(monkeypatch):
     assert body["aspect_ratio"] == "9:16"
     types = {f["frame_type"] for f in body["frame_images"]}
     assert types == {"first_frame", "last_frame"}
+
+
+def test_assemble_applies_music_offset(monkeypatch, tmp_path):
+    # MUSIC_OFFSET должен попасть в atrim ДО amix, а не быть проигнорирован —
+    # иначе трек всегда звучит с начала файла и пик не подвести под вердикт.
+    monkeypatch.setenv("MUSIC_OFFSET", "12")
+    monkeypatch.setenv("MUSIC_VOLUME", "0.3")
+    calls = []
+
+    def fake_ff(*args):
+        calls.append(args)
+        # эмулируем результат ffmpeg — конечный файл должен появиться
+        out = args[-1]
+        if out.endswith(".mp4"):
+            with open(out, "wb") as f:
+                f.write(b"0")
+
+    monkeypatch.setattr(video, "_ff", fake_ff)
+    monkeypatch.setattr(video, "_has_audio", lambda p: False)
+    monkeypatch.setattr(video, "ensure_tools", lambda: None)
+
+    seg = tmp_path / "seg0.mp4"
+    seg.write_bytes(b"0")
+    music = tmp_path / "music.mp3"
+    music.write_bytes(b"0")
+    out = tmp_path / "out.mp4"
+
+    video.assemble([str(seg)], str(out), hold_sec=2.0, music=str(music))
+
+    mix_call = calls[-1]
+    filter_complex = mix_call[mix_call.index("-filter_complex") + 1]
+    assert "atrim=start=12.0" in filter_complex
+    assert "volume=0.3" in filter_complex
 
 
 if __name__ == "__main__":

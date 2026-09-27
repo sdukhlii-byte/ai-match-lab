@@ -134,6 +134,42 @@ def _verdict(rows, home, away):
     return pick_txt, n, top_score, k
 
 
+def _pretty_date(iso: str) -> str:
+    """`2026-10-02` → `2 OCT 2026`: на экране это читают люди, а не парсер."""
+    try:
+        d = datetime.date.fromisoformat((iso or "").strip())
+    except ValueError:
+        return (iso or "").strip()
+    months = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+              "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+    return f"{d.day} {months[d.month - 1]} {d.year}"
+
+
+def consensus_text(rows: list, home: str, away: str) -> str:
+    """Кого выбрали модели — для плашки на экране: «SÃO PAULO FC».
+
+    Берём тот же расчёт, что и подпись поста (_verdict), чтобы экран и текст
+    поста не могли разойтись между собой.
+    """
+    if not rows:
+        return ""
+    pick, _, _, _ = _verdict(rows, home, away)
+    return "DRAW" if pick == "Draw" else pick.replace(" to win", "")
+
+
+def consensus_note(rows: list, home: str, away: str) -> str:
+    """Сила согласия моделей: «4 OF 5 MODELS AGREE».
+
+    Своих коэффициентов у нас нет, а выдумывать их в iGaming-креативе нельзя,
+    поэтому аргументом для зрителя служит единодушие моделей — величина,
+    которую мы действительно посчитали.
+    """
+    if not rows:
+        return ""
+    _, n, _, _ = _verdict(rows, home, away)
+    return f"{n} of {len(rows)} models agree"
+
+
 def captions(match: dict, rows: list) -> dict:
     home, away = match["home"], match["away"]
     pick, n, top, k = _verdict(rows, home, away)
@@ -272,26 +308,43 @@ def _parse_scores(s: str) -> list[tuple[int, int]]:
     return parse_scores(s, len(predictions.SLOTS))
 
 
-def _segments(n_rows: int) -> list[tuple[int, int]]:
-    """Разбивка строк по видео-сегментам.
+def prefill_rows() -> int:
+    """Сколько строк уже заполнено на ПЕРВОМ кадре.
 
-    По умолчанию — один сегмент на строку (SEGMENTS не задан -> берём заведомо
-    большое число, min() ниже всё равно обрежет его до n_rows). Так модели
-    достаётся всего 2 клетки на 4-секундный сегмент вместо 10 клеток на один
-    8-секундный ролик — при таком уплотнении рука физически не успевает
-    коснуться части клеток, и цифра просто "появляется" без движения руки.
-    SEGMENTS=1 — старое поведение (весь прогноз одним роликом), дороже по
-    непрерывности, но дешевле по деньгам (меньше запросов к видео-модели).
+    В ленте у ролика полторы секунды: пустой экран на 0% их проигрывает.
+    Стартуем с уже готовой первой строкой — зритель сразу видит и цифры, и то,
+    что процесс идёт. 0 вернёт прежний старт с чистого бланка.
     """
-    if n_rows <= 0:
+    return env_int("PREFILL_ROWS", 1, lo=0, hi=4)
+
+
+def _default_segments() -> int:
+    """Сколько сегментов резать по умолчанию.
+
+    Стилю marker нужен сегмент на строку: руке надо физически доехать до
+    каждой клетки, иначе цифры «телепортируются». В стиле cyber руки нет —
+    цифры проявляются сами, поэтому сегментов нужно меньше: ролик получается
+    короче (под ленту) и дешевле.
+    """
+    return 3 if video.style() == "cyber" else 99
+
+
+def _segments(n_rows: int, start: int = 0) -> list[tuple[int, int]]:
+    """Разбивка строк по видео-сегментам, начиная со строки `start`.
+
+    SEGMENTS=1 — весь прогноз одним роликом: дешевле всего, но у модели
+    меньше всего времени на каждую клетку.
+    """
+    remaining = n_rows - start
+    if remaining <= 0:
         return []
-    k = max(1, min(env_int("SEGMENTS", 99, lo=1), n_rows))
-    base, rem = divmod(n_rows, k)
-    bounds, start = [], 0
+    k = max(1, min(env_int("SEGMENTS", _default_segments(), lo=1), remaining))
+    base, rem = divmod(remaining, k)
+    bounds, cur = [], start
     for i in range(k):
         size = base + (1 if i < rem else 0)  # остаток отдаём первым сегментам: 5/3 -> 2,2,1
-        bounds.append((start, start + size))
-        start += size
+        bounds.append((cur, cur + size))
+        cur += size
     return bounds
 
 
@@ -349,10 +402,15 @@ def run(match: dict, args) -> str:
         home_flag=load_flag(match.get("home_flag", ""), match["home"]),
         away_flag=load_flag(match.get("away_flag", ""), match["away"]),
         rows=[poster.Row(r["label"], r["home"], r["away"], r["icon"]) for r in rows],
+        competition=match.get("competition", ""),
+        date=_pretty_date(match.get("date", "")),
+        consensus=consensus_text(rows, match["home"], match["away"]),
+        consensus_note=consensus_note(rows, match["home"], match["away"]),
     )
     table = env_str("TABLE_IMAGE", os.path.join(HERE, "assets", "table.jpg"))
-    segs = _segments(len(rows))
-    keyframes = [poster.compose_frame(poster.render_paper(m, 0), table)]
+    start = min(prefill_rows(), max(0, len(rows) - 1))
+    segs = _segments(len(rows), start)
+    keyframes = [poster.compose_frame(poster.render_paper(m, start), table)]
     for _, end in segs:
         keyframes.append(poster.compose_frame(poster.render_paper(m, end), table))
     blank_path = os.path.join(out_dir, "blank.jpg")

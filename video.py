@@ -75,7 +75,9 @@ OPENROUTER_MODELS = {
 # табло сами, всё это просто негде сломаться.
 NEGATIVE_CYBER = (
     "hands, fingers, arms, people, pen, pencil, marker, brush, ink, ink smears, smudges, "
-    "streaks, handwriting, anything physically touching the board, camera movement, zoom, pan, "
+    "streaks, handwriting, anything physically touching the phone, phone being picked up, "
+    "phone moving or tilting, screen turning off, notification banners, status bar changes, "
+    "camera movement, zoom, pan, "
     "shake, text changes, distorted letters, extra boxes, layout changes, moving board, "
     "watermark, ghost or duplicate digits, digits appearing before their turn, two boxes "
     "filling at once, digits in the wrong box, digits overflowing box edges, oversized digits, "
@@ -147,11 +149,15 @@ def _prompt_cyber(rows: list, first_row: int, last_row: int) -> str:
     order = "\n".join(lines)
     already = "Rows above already show their locked digits and stay untouched.\n" if first_row else ""
     return (
-        "Cinematic locked-off shot of a premium backlit \"COINPLAY AI LAB\" prediction board resting "
-        "on a dark surface. Absolutely NO hands, people, pens or markers — nothing physical ever "
-        "enters frame or touches the board. The board itself is alive, like a crypto trading "
-        "terminal.\n"
-        "The empty score boxes fill THEMSELVES, one at a time, in this exact order:\n"
+        "Cinematic locked-off shot of a smartphone lying on a dark luxury desk, its screen ON and "
+        "showing the \"COINPLAY AI LAB\" prediction app. The phone never moves, is never picked up, "
+        "and absolutely NO hands, people, pens or markers enter the frame — this is a screen "
+        "recording of a live crypto-terminal app, not someone using a phone.\n"
+        "The app is mid-analysis and finishes during the clip: the \"AI ANALYSIS\" progress bar "
+        "under the team names grows steadily left to right with a gold glow, its percentage counts "
+        "up, and each model's row brightens from dim grey to white the moment that model's score "
+        "appears. On screen the empty score boxes fill THEMSELVES, one at a time, in this exact "
+        "order:\n"
         f"{already}{order}\n"
         "How each digit arrives: the target box lights up, a fast holographic reel of scrambling "
         "numerals rolls inside it for a beat like an odds ticker settling, then snaps and locks into "
@@ -160,10 +166,11 @@ def _prompt_cyber(rows: list, first_row: int, last_row: int) -> str:
         "later box stays completely empty and dark until its own turn, even though the end frame "
         "already shows them filled. Never two boxes at once.\n"
         "Digits are clean, sharp, precisely centred and sized to sit inside their box with margin. "
-        "Everything else — title, crests, model names, icons, layout — stays perfectly still and "
-        "unchanged. Continuous rhythm with no idle pause: the next box starts lighting up as the "
-        "previous locks, action filling the whole clip. Rich blacks, deep violet and gold light, "
-        "faint floating data particles and a subtle ambient glow. Expensive fintech-terminal mood."
+        "Everything else — phone body, title, crests, model names, icons, layout — stays perfectly "
+        "still and unchanged, and the desk around the phone stays exactly as it starts. Continuous "
+        "rhythm with no idle pause: the next box starts lighting up as the previous locks, action "
+        "filling the whole clip. Rich blacks, gold screen light glowing onto the desk around the "
+        "phone, deep violet accents. Expensive fintech-terminal mood."
     )
 
 
@@ -515,11 +522,18 @@ def assemble(segments: list, out_path: str, hold_sec: float = 2.0, music: str = 
 
         hold_sec = max(0.0, hold_sec)
         if music and os.path.exists(music):
+            # MUSIC_OFFSET — с какой секунды трека начинать: так пик/дроп
+            # трека можно подвести ровно под момент раскрытия вердикта
+            # (конец последних сегментов + начало hold-кадра), а не всегда
+            # слушать начало файла. atrim идёт ПОСЛЕ stream_loop, поэтому
+            # смещение работает даже если сам трек короче видео.
+            offset = env_float("MUSIC_OFFSET", 0.0, lo=0.0, hi=600.0)
             _ff("-i", joined, "-stream_loop", "-1", "-i", music,
                 "-filter_complex",
                 f"[0:v]tpad=stop_mode=clone:stop_duration={hold_sec}[v];"
                 f"[0:a]apad=pad_dur={hold_sec}[a0];"
-                f"[1:a]volume={env_float('MUSIC_VOLUME', 0.25, lo=0.0, hi=1.0)}[a1];"
+                f"[1:a]atrim=start={offset},asetpts=PTS-STARTPTS,"
+                f"volume={env_float('MUSIC_VOLUME', 0.25, lo=0.0, hi=1.0)}[a1];"
                 f"[a0][a1]amix=inputs=2:duration=first:normalize=0[a]",
                 "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "medium",
                 "-crf", "19", "-c:a", "aac", "-b:a", "160k",
