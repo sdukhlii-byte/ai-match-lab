@@ -417,13 +417,19 @@ def compose_frame(paper: Image.Image, table_image: str = "", seed: int = 3) -> I
     if bg is None:
         bg = _procedural_wood(FRAME_W, FRAME_H, seed)
 
-    target_w = int(FRAME_W * 0.955)
+    # Раньше лист занимал 0.955 ширины кадра — почти край в край, без стола
+    # вокруг. На видео это давало эффект "всё лицо в кадре": рука и маркер на
+    # таком масштабе перекрывают половину постера, а любые фоновые предметы
+    # (кружка, растение), которых нет на самом кадре-якоре, начинают наезжать
+    # на края листа — их просто некуда деть. 0.72 — как на референсе (лист
+    # занимает ~70% ширины, сверху и по бокам видно стол).
+    target_w = int(FRAME_W * 0.72)
     target_h = int(target_w * PAPER_H / PAPER_W)
     sheet = paper.resize((target_w, target_h), Image.LANCZOS).convert("RGBA")
     sheet = sheet.rotate(-0.6, resample=Image.BICUBIC, expand=True)
 
     x = (FRAME_W - sheet.width) // 2
-    y = int(FRAME_H * 0.10)
+    y = int(FRAME_H * 0.20)
 
     shadow = Image.new("RGBA", bg.size, (0, 0, 0, 0))
     alpha = sheet.split()[-1].point(lambda a: 90 if a else 0)
