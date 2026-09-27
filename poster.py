@@ -33,10 +33,10 @@ LOGO_MARK = os.path.join(HERE, "assets", "logo", "mark.png")  # настоящи
 
 # Кадр — как у референса (720x1280), рендерим в 1080x1920.
 FRAME_W, FRAME_H = 1080, 1920
-# «Карточка» — это экран смартфона, поэтому пропорции телефонные (~9:19.5),
-# а не A4. Неон на бумаге физически не светится, на экране — светится по
-# определению: та же анимация цифр перестаёт выглядеть фокусом.
-PAPER_W, PAPER_H = 1240, 2684
+# Экран устройства — больше не телефон, а широкий терминал (см. запрос
+# «расширял бы карточку вширь, она длинная и узкая»): пропорции ближе к
+# планшету/панели трейдинг-терминала, а не к вытянутому 9:19.5 у смартфона.
+PAPER_W, PAPER_H = 1680, 2684
 
 # --- Coinplay brand palette -------------------------------------------------
 # Палитра «криптоказино»: чёрный + золото, фиолет остаётся только как
@@ -291,14 +291,17 @@ def _vs(d, cx, cy) -> None:
     _text_c(d, (cx, cy - 4), "VS", _font("RobotoCondensed-Bold.ttf", 92), YELLOW)
 
 
-# Геометрия таблицы — нужна и для рендера, и для рукописных цифр.
+# Геометрия таблицы — нужна и для рендера, и для рукописных цифр. Боксы и
+# иконка стали крупнее, а колонка с именем моделей — заметно шире: карточка
+# расширилась, и это высвободившееся место идёт туда, а не превращается в
+# пустоту справа от таблицы.
 TABLE_X0, TABLE_X1 = 70, PAPER_W - 70
 TABLE_Y0 = 1180
 ROW_H = 218
-ICON_CELL = 170
-BOX_W, BOX_H = 212, 152
-HOME_BOX_CX = 760
-AWAY_BOX_CX = 1040
+ICON_CELL = 190
+BOX_W, BOX_H = 232, 156
+AWAY_BOX_CX = TABLE_X1 - 20 - BOX_W // 2
+HOME_BOX_CX = AWAY_BOX_CX - BOX_W - 70
 NAME_X = TABLE_X0 + ICON_CELL + 56
 NAME_MAX_W = HOME_BOX_CX - BOX_W // 2 - 24 - NAME_X
 
@@ -432,6 +435,11 @@ HOOK_Y = 392            # крупный вопрос-хук
 SUB_Y = 496             # «5 AI MODELS PREDICT»
 META_Y = 566            # лига и дата
 FLAG_TOP, FLAG_BOT = 636, 916
+# Отступ и ширина карточки герба — раньше были магическими числами 90/480,
+# посчитанными под старую узкую ширину. Теперь это доля от PAPER_W, чтобы
+# соотношение «герб / зазор под VS-бейдж» не съезжало при расширении карточки.
+FLAG_MARGIN = 120
+FLAG_W = 520
 VS_Y = 776
 NAMES_Y = 978           # подписи команд под эмблемами
 PROGRESS_Y = 1120       # центр полосы «AI анализирует»; ниже, чем раньше — после
@@ -524,9 +532,11 @@ def _team_names(img: Image.Image, m: Match) -> None:
     """Подписи команд под эмблемами: по гербу не всегда понятно, кто играет,
     а ставка делается именно на команду."""
     d = ImageDraw.Draw(img)
-    for name, cx in ((m.home, (90 + 480) // 2), (m.away, (PAPER_W - 480 + PAPER_W - 90) // 2)):
+    home_cx = FLAG_MARGIN + FLAG_W // 2
+    away_cx = PAPER_W - FLAG_MARGIN - FLAG_W // 2
+    for name, cx in ((m.home, home_cx), (m.away, away_cx)):
         text = name.upper()
-        font = _fit_font(d, text, 400, "RobotoCondensed-Bold.ttf", 52, 26)
+        font = _fit_font(d, text, FLAG_W - 40, "RobotoCondensed-Bold.ttf", 52, 26)
         d.text((cx, NAMES_Y), text, font=font, fill=WHITE, anchor="mm")
 
 
@@ -677,8 +687,9 @@ def render_paper(m: Match, filled_rows: int = 0, seed: int = 7) -> Image.Image:
                 _fit_font(d, meta.upper(), TABLE_X1 - TABLE_X0 - 40,
                           "RobotoCondensed-SemiBold.ttf", 40, 26), GREY)
 
-    _flag_card(img, m.home_flag, (90, FLAG_TOP, 480, FLAG_BOT))
-    _flag_card(img, m.away_flag, (PAPER_W - 480, FLAG_TOP, PAPER_W - 90, FLAG_BOT))
+    _flag_card(img, m.home_flag, (FLAG_MARGIN, FLAG_TOP, FLAG_MARGIN + FLAG_W, FLAG_BOT))
+    _flag_card(img, m.away_flag,
+              (PAPER_W - FLAG_MARGIN - FLAG_W, FLAG_TOP, PAPER_W - FLAG_MARGIN, FLAG_BOT))
     _vs(ImageDraw.Draw(img), PAPER_W // 2, VS_Y)
     _team_names(img, m)
     _progress(img, min(max(0, filled_rows), len(m.rows)), len(m.rows))

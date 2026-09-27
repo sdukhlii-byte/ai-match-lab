@@ -452,10 +452,13 @@ def test_render_paper_shapes():
     assert img.size == (poster.PAPER_W, poster.PAPER_H) and img.mode == "RGB"
 
 
-def test_screen_is_phone_shaped():
-    """Экран должен быть телефонным (~9:19.5), а не A4: на бумаге неоновое
+def test_screen_is_device_shaped():
+    """Экран — это уже не смартфон (9:19.5), а широкий AI-терминал
+    (см. запрос «расширял бы карточку вширь, она длинная и узкая»), но
+    всё ещё портретный экран, а не альбомный лист A4: на бумаге неоновое
     свечение цифр физически необъяснимо."""
-    assert 0.40 < poster.PAPER_W / poster.PAPER_H < 0.52
+    ratio = poster.PAPER_W / poster.PAPER_H
+    assert 0.55 < ratio < 0.85
 
 
 def test_progress_and_verdict_light_up_only_when_ready():

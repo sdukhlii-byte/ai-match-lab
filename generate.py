@@ -63,14 +63,46 @@ def _open_image(data: bytes, as_svg: bool = False) -> Image.Image:
         return im.convert("RGBA")
 
 
+_PLACEHOLDER_SKIP = {"FC", "CF", "SC", "AC", "CD", "SD", "UD", "AS", "CLUB"}
+
+
 def _placeholder(team: str) -> Image.Image:
-    img = Image.new("RGB", (600, 400), (235, 238, 245))
+    """Заглушка на случай, если для команды не нашлось реальной эмблемы.
+
+    Раньше это была почти пустая светлая карточка с мелкой подписью — на
+    реальной генерации видео-модель принимала её за незаполненный бокс и
+    «дорисовывала» в неё то цифру, то случайный значок, то другой рисунок
+    в разных кадрах одного и того же ролика (флаг обязан быть статичной
+    фотографией, см. промпт в video.py). Причина — слишком мало визуальной
+    информации: почти однотонное поле ей не за что «зацепиться».
+    Монограмма в кружке даёт столько же плотности, сколько настоящий герб,
+    так что модели больше нечего домысливать.
+    """
+    img = Image.new("RGB", (600, 400), poster.BG_2)
     d = ImageDraw.Draw(img)
+    # Свой акцентный цвет на команду — детерминированный (не hash(), тот
+    # рандомизирован между запусками процесса), чтобы два безымянных клуба
+    # в одной карточке не сливались в одинаковые кружки.
+    palette = [poster.GOLD, poster.VIOLET, poster.LILAC, poster.YELLOW]
+    idx = sum(ord(c) for c in (team or "")) % len(palette)
+    color = palette[idx]
+
+    cx, cy, r = 300, 200, 130
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=poster.PANEL, outline=color, width=8)
+    d.ellipse([cx - r + 18, cy - r + 18, cx + r - 18, cy + r - 18], outline=color, width=3)
+
+    words = [w for w in re.findall(r"[A-Za-zÀ-ÿ]+", team or "") if w.upper() not in _PLACEHOLDER_SKIP]
+    if len(words) >= 2:
+        letters = "".join(w[0] for w in words[:3]).upper()
+    elif words:
+        letters = words[0][:3].upper()
+    else:
+        letters = (team or "?")[:2].upper()
     try:
-        f = poster._font("RussoOne-Regular.ttf", 64)
+        f = poster._font("RussoOne-Regular.ttf", 108 if len(letters) <= 2 else 84)
     except poster.AssetMissing:
         f = ImageFont.load_default()
-    d.text((300, 200), (team or "?").upper()[:12], font=f, fill=poster.NAVY, anchor="mm")
+    d.text((cx, cy), letters, font=f, fill=poster.WHITE, anchor="mm")
     return img.convert("RGBA")
 
 
