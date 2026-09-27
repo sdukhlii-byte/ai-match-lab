@@ -18,9 +18,15 @@ COPY . .
 
 # Кэш CSV и папка результатов должны быть доступны на запись непривилегированному
 # пользователю — контейнеру незачем работать от root.
+#
+# USER aml здесь НЕ ставим: примонтированный Volume (/app/state) приходит с
+# правами root и перекрывает этот chown — под aml запись падала бы с
+# "Permission denied", а вместе с ней и дедупликация матчей. Привилегии
+# роняет entrypoint, уже после того как починит права на точках монтирования.
 RUN useradd --create-home --uid 10001 aml \
     && mkdir -p /app/out /app/.cache /app/state \
-    && chown -R aml:aml /app
-USER aml
+    && chown -R aml:aml /app \
+    && chmod +x /app/docker-entrypoint.sh
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["python", "generate.py", "--auto"]

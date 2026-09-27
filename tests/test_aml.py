@@ -421,14 +421,43 @@ def test_empty_rows_do_not_crash():
 
 # ------------------------------------------------------------------ video --
 
-def test_prompt_stays_under_fal_length_limit():
+def test_prompt_stays_under_fal_length_limit(monkeypatch):
     """Регрессия: fal/Kling отклоняет prompt длиннее 2500 символов (422
     'String should have at most 2500 characters') — с длинными именами команд
-    и всеми 5 строками в одном сегменте текст раньше вылезал за лимит."""
+    и всеми 5 строками в одном сегменте текст раньше вылезал за лимит.
+    Проверяем оба стиля: у каждого свой текст и свой negative."""
     rows = [{"label": "Perplexity", "home": "2", "away": "1"} for _ in range(5)]
-    for first, last in ((0, 5), (0, 3), (3, 5)):
-        assert len(video.build_prompt(rows, first, last)) < 2500
-    assert len(video.NEGATIVE) < 2500
+    for style in ("cyber", "marker"):
+        monkeypatch.setenv("VIDEO_STYLE", style)
+        for first, last in ((0, 5), (0, 3), (3, 5)):
+            assert len(video.build_prompt(rows, first, last)) < 2500
+        assert len(video.negative()) < 2500
+
+
+def test_cyber_style_is_default_and_has_no_hands(monkeypatch):
+    """Смысл стиля cyber — в кадре нет ни рук, ни маркера: именно они давали
+    лишние пальцы, размазанные следы чернил и маркер на пол-кадра."""
+    monkeypatch.delenv("VIDEO_STYLE", raising=False)
+    assert video.style() == "cyber"
+    rows = [{"label": "ChatGPT", "home": "2", "away": "1"}]
+    prompt = video.build_prompt(rows, 0, 1).lower()
+    # Маркер в киберпромпте может упоминаться только как запрет ("NO ... markers").
+    assert "no hands, people, pens or markers" in prompt
+    # ...но рисования как действия в нём быть не должно вообще.
+    for word in ("write ", "stroke", "the tip", "hand moves"):
+        assert word not in prompt
+    assert "hands" in video.negative().lower()
+
+
+def test_marker_style_still_available(monkeypatch):
+    monkeypatch.setenv("VIDEO_STYLE", "marker")
+    rows = [{"label": "ChatGPT", "home": "2", "away": "1"}]
+    assert "marker" in video.build_prompt(rows, 0, 1).lower()
+
+
+def test_unknown_style_falls_back_to_cyber(monkeypatch):
+    monkeypatch.setenv("VIDEO_STYLE", "disco")
+    assert video.style() == "cyber"
 
 
 def _tiny_image():

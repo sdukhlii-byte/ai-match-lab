@@ -1,10 +1,17 @@
-"""Видео «рука вписывает счёт» через fal.ai (first-frame + last-frame).
+"""Видео «счёт появляется на табло» (first-frame + last-frame).
 
 Почему два кадра, а не один: text-to-video / image-to-video модель сама
 не напишет нужные цифры — она выдумает свои. Поэтому мы отдаём ей
 первый кадр (пустой бланк) и последний (бланк с нашими цифрами), а модель
-дорисовывает между ними руку с маркером. Итоговые цифры гарантированно
-совпадают с прогнозами и подписью поста.
+придумывает только то, КАК одно превращается в другое. Итоговые цифры
+гарантированно совпадают с прогнозами и подписью поста.
+
+Как именно — задаёт VIDEO_STYLE:
+  cyber  (по умолчанию) — рук в кадре нет: цифры сами проявляются в клетках,
+           как на крипто-терминале (барабан цифр → щелчок → свечение).
+           Рука с маркером была самой хрупкой частью генерации: лишние
+           пальцы, размазанные следы чернил, маркер на пол-кадра;
+  marker — прежний вариант «рука вписывает счёт», оставлен как запасной.
 
 Провайдеры (VIDEO_PROVIDER) — два разных API, оба поддерживают first-frame +
 last-frame (нужно и там, и там: см. выше почему):
@@ -61,18 +68,44 @@ OPENROUTER_MODELS = {
 
 # fal у Kling режет prompt/negative_prompt на 2500 символов — держим с запасом,
 # особенно NEGATIVE (он не зависит от числа строк, а prompt растёт с ними).
-NEGATIVE = ("text changes, distorted letters, extra boxes, moving paper, camera movement, zoom, "
-            "blur, extra fingers, deformed hands, watermark, hand touching multiple boxes at once, "
-            "fingers pointing at boxes, ghost or duplicate digits, digits appearing before written, "
-            "wrong-box ink, two boxes filled at once, digits bleeding between rows, black/dark ink, "
-            "ink color not matching marker tip, hand freezing mid-action, idle pauses, marker "
-            "hovering without touching paper, dead time, action stopping before video ends, second "
-            "hand, another hand holding the paper, digit popping in without the marker drawing it, "
-            "ink appearing where the tip never travelled, instant or teleporting digits, extreme "
-            "close-up, macro shot, hand or marker filling more than half the frame, oversized or "
-            "bold digits, digits too big for the box, digits overflowing box edges, random props, "
-            "decorative objects appearing or vanishing between shots, background clutter not present "
-            "at the start")
+
+# VIDEO_STYLE=cyber (по умолчанию): рук в кадре нет вообще. Рука с маркером —
+# самая хрупкая часть генерации: шесть пальцев, размазанные следы чернил,
+# «возит маркером», перекрывает пол-постера. Цифрам, которые проявляются на
+# табло сами, всё это просто негде сломаться.
+NEGATIVE_CYBER = (
+    "hands, fingers, arms, people, pen, pencil, marker, brush, ink, ink smears, smudges, "
+    "streaks, handwriting, anything physically touching the board, camera movement, zoom, pan, "
+    "shake, text changes, distorted letters, extra boxes, layout changes, moving board, "
+    "watermark, ghost or duplicate digits, digits appearing before their turn, two boxes "
+    "filling at once, digits in the wrong box, digits overflowing box edges, oversized digits, "
+    "warped or melting numerals, unreadable numerals, flicker across the whole frame, "
+    "idle pauses, dead time, action stopping before the video ends, random props, objects "
+    "appearing or vanishing, background clutter not present at the start")
+
+# VIDEO_STYLE=marker — прежняя «рука вписывает счёт» (оставлена как запасная).
+NEGATIVE_MARKER = (
+    "text changes, distorted letters, extra boxes, moving paper, camera movement, zoom, "
+    "blur, extra fingers, deformed hands, watermark, hand touching multiple boxes at once, "
+    "fingers pointing at boxes, ghost or duplicate digits, digits appearing before written, "
+    "wrong-box ink, two boxes filled at once, digits bleeding between rows, black/dark ink, "
+    "ink color not matching marker tip, hand freezing mid-action, idle pauses, marker "
+    "hovering without touching paper, dead time, action stopping before video ends, second "
+    "hand, another hand holding the paper, digit popping in without the marker drawing it, "
+    "ink appearing where the tip never travelled, instant or teleporting digits, extreme "
+    "close-up, macro shot, hand or marker filling more than half the frame, oversized or "
+    "bold digits, digits too big for the box, digits overflowing box edges, random props, "
+    "decorative objects appearing or vanishing between shots, background clutter not present "
+    "at the start")
+
+
+def style() -> str:
+    s = env_str("VIDEO_STYLE", "cyber").lower()
+    return s if s in ("cyber", "marker") else "cyber"
+
+
+def negative() -> str:
+    return NEGATIVE_MARKER if style() == "marker" else NEGATIVE_CYBER
 
 
 class VideoError(RuntimeError):
@@ -95,9 +128,46 @@ def ensure_tools() -> None:
 # ---------------------------------------------------------------- промпт ---
 
 def build_prompt(rows: list, first_row: int, last_row: int) -> str:
-    """Держим итоговую строку заметно короче 2500 символов (лимит fal/Kling на
+    """Промпт сегмента под текущий VIDEO_STYLE.
+
+    Держим итоговую строку заметно короче 2500 символов (лимит fal/Kling на
     поле prompt) — она растёт с числом строк в сегменте, так что текст вокруг
-    списка должен быть компактным, а не только сам список."""
+    списка должен быть компактным, а не только сам список.
+    """
+    if style() == "marker":
+        return _prompt_marker(rows, first_row, last_row)
+    return _prompt_cyber(rows, first_row, last_row)
+
+
+def _prompt_cyber(rows: list, first_row: int, last_row: int) -> str:
+    lines = []
+    for i, r in enumerate(rows[first_row:last_row], start=1):
+        lines.append(f'{i}. "{r["label"].upper()}" row: "{r["home"]}" locks into its left box, '
+                     f'then "{r["away"]}" locks into its right box.')
+    order = "\n".join(lines)
+    already = "Rows above already show their locked digits and stay untouched.\n" if first_row else ""
+    return (
+        "Cinematic locked-off shot of a premium backlit \"COINPLAY AI LAB\" prediction board resting "
+        "on a dark surface. Absolutely NO hands, people, pens or markers — nothing physical ever "
+        "enters frame or touches the board. The board itself is alive, like a crypto trading "
+        "terminal.\n"
+        "The empty score boxes fill THEMSELVES, one at a time, in this exact order:\n"
+        f"{already}{order}\n"
+        "How each digit arrives: the target box lights up, a fast holographic reel of scrambling "
+        "numerals rolls inside it for a beat like an odds ticker settling, then snaps and locks into "
+        "the final glowing yellow digit with a crisp pulse of light, a thin scanline sweep and a "
+        "brief bloom that spills onto the board around that box. Only the active box glows; every "
+        "later box stays completely empty and dark until its own turn, even though the end frame "
+        "already shows them filled. Never two boxes at once.\n"
+        "Digits are clean, sharp, precisely centred and sized to sit inside their box with margin. "
+        "Everything else — title, crests, model names, icons, layout — stays perfectly still and "
+        "unchanged. Continuous rhythm with no idle pause: the next box starts lighting up as the "
+        "previous locks, action filling the whole clip. Rich blacks, deep violet and gold light, "
+        "faint floating data particles and a subtle ambient glow. Expensive fintech-terminal mood."
+    )
+
+
+def _prompt_marker(rows: list, first_row: int, last_row: int) -> str:
     lines = []
     for i, r in enumerate(rows[first_row:last_row], start=1):
         lines.append(f'{i}. "{r["label"].upper()}": write "{r["home"]}" in its left box, then '
@@ -320,14 +390,14 @@ def _payload(provider: str, first: Image.Image, last: Image.Image, prompt: str) 
             "aspect_ratio": "9:16",
             "resolution": env_str("VEO_RESOLUTION", "1080p"),
             "generate_audio": env_bool("VEO_AUDIO", True),
-            "negative_prompt": NEGATIVE,
+            "negative_prompt": negative(),
         }
     return {
         "prompt": prompt,
         "image_url": _data_uri(first),
         "tail_image_url": _data_uri(last),
         "duration": env_str("KLING_DURATION", "10"),
-        "negative_prompt": NEGATIVE,
+        "negative_prompt": negative(),
         # Пробовали поднять до 0.8 — стало хуже: модель агрессивнее "подгоняет"
         # кадры под последний референс (уже полностью заполненный бланк) и
         # цифры начинают появляться в клетках РАНЬШЕ, чем маркер до них
