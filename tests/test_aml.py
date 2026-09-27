@@ -329,13 +329,14 @@ def test_parse_scores_errors():
 
 
 def test_segments_split(monkeypatch):
-    # cyber: рук в кадре нет, поэтому сегментов нужно меньше — ролик короче
-    # (под ленту) и дешевле.
+    # и cyber, и marker по умолчанию режут по одной строке (2 клетки) на
+    # сегмент — паковать несколько строк в один клип ломало реальную
+    # генерацию (цифры наплывали на гербы, подписи двоились), см. коммент
+    # в _default_segments().
     monkeypatch.delenv("SEGMENTS", raising=False)
     monkeypatch.delenv("VIDEO_STYLE", raising=False)
-    assert generate._segments(5) == [(0, 2), (2, 4), (4, 5)]
+    assert generate._segments(5) == [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
 
-    # marker: руке надо доехать до каждой клетки — сегмент на строку.
     monkeypatch.setenv("VIDEO_STYLE", "marker")
     assert generate._segments(5) == [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
 

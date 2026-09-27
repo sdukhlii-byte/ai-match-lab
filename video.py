@@ -165,12 +165,16 @@ def _prompt_cyber(rows: list, first_row: int, last_row: int) -> str:
         "brief bloom that spills onto the board around that box. Only the active box glows; every "
         "later box stays completely empty and dark until its own turn, even though the end frame "
         "already shows them filled. Never two boxes at once.\n"
-        "Digits are clean, sharp, precisely centred and sized to sit inside their box with margin. "
-        "Everything else — phone body, title, crests, model names, icons, layout — stays perfectly "
-        "still and unchanged, and the desk around the phone stays exactly as it starts. Continuous "
-        "rhythm with no idle pause: the next box starts lighting up as the previous locks, action "
-        "filling the whole clip. Rich blacks, gold screen light glowing onto the desk around the "
-        "phone, deep violet accents. Expensive fintech-terminal mood."
+        "Digits are clean, sharp, precisely centred and sized to sit inside their box with margin, "
+        "and appear ONLY inside the two score boxes named above — never anywhere else on screen. "
+        "The two flag cards near the top of the screen are ordinary static photos of national flags: "
+        "they hold no digits, no glow, no scramble effect, and look pixel-identical in every frame of "
+        "this clip, from the very first to the very last. Everything else — phone body, title, crests, "
+        "flag cards, team names, model names, icons, layout — stays perfectly still and unchanged, and "
+        "the desk around the phone stays exactly as it starts. Continuous rhythm with no idle pause: "
+        "the next box starts lighting up as the previous locks, action filling the whole clip. Rich "
+        "blacks, gold screen light glowing onto the desk around the phone, deep violet accents. "
+        "Expensive fintech-terminal mood."
     )
 
 
