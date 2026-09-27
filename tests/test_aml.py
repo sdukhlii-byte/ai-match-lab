@@ -298,6 +298,55 @@ def test_all_candidates_posted_raises_no_fixtures(monkeypatch):
         fixtures.fetch()
 
 
+def _api_match_comp(mid, status, when, competition, home="Team A", away="Team B"):
+    return {"id": mid, "status": status, "utcDate": when,
+            "homeTeam": {"name": home, "crest": ""}, "awayTeam": {"name": away, "crest": ""},
+            "competition": {"name": competition}}
+
+
+def test_dense_league_does_not_dominate_every_pick(monkeypatch):
+    """Регрессия: «берём просто ближайший по времени матч из всех лиг»
+    систематически выбирал одну и ту же лигу (например, Série A Бразилии,
+    где игры почти каждый день) — не повтор матча, а перекос отбора в
+    сторону лиги с более плотным календарём."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    soon = (now + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    later = (now + datetime.timedelta(days=2, hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = [
+        _api_match_comp(1, "TIMED", soon, "Brasileirão Série A", "Santos FC", "São Paulo FC"),
+        _api_match_comp(2, "TIMED", later, "Premier League", "Arsenal FC", "Chelsea FC"),
+    ]
+    monkeypatch.setattr(fixtures, "_request", lambda code, params: rows)
+
+    # вчера уже публиковали Série A — без ротации сегодня снова выбрали бы
+    # её же (id=1 раньше по времени), хотя есть свежая альтернатива.
+    state.mark_posted("0", competition="Brasileirão Série A")
+
+    got = fixtures.fetch(per_run=1)
+    assert got[0]["home"] == "Arsenal FC"
+
+
+def test_rotation_never_blocks_posting_when_no_alternative(monkeypatch):
+    """Если во всех остальных лигах пауза — ротация не должна ронять прогон,
+    просто снова берём то, что есть."""
+    when = (datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = [_api_match_comp(1, "TIMED", when, "Brasileirão Série A")]
+    monkeypatch.setattr(fixtures, "_request", lambda code, params: rows)
+    state.mark_posted("0", competition="Brasileirão Série A")
+    state.mark_posted("00", competition="Brasileirão Série A")
+
+    got = fixtures.fetch(per_run=1)
+    assert got[0]["id"] == "1"
+
+
+def test_recent_competitions_reads_newest_first(monkeypatch):
+    state.mark_posted("a", competition="Premier League")
+    state.mark_posted("b", competition="La Liga")
+    state.mark_posted("c", competition="Serie A")
+    assert state.recent_competitions(2) == ["Serie A", "La Liga"]
+
+
 def test_skip_posted_can_be_disabled(monkeypatch):
     when = (datetime.datetime.now(datetime.timezone.utc)
             + datetime.timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")

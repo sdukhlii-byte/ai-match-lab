@@ -83,7 +83,11 @@ NEGATIVE_CYBER = (
     "filling at once, digits in the wrong box, digits overflowing box edges, oversized digits, "
     "warped or melting numerals, unreadable numerals, flicker across the whole frame, "
     "idle pauses, dead time, action stopping before the video ends, random props, objects "
-    "appearing or vanishing, background clutter not present at the start")
+    "appearing or vanishing, background clutter not present at the start, VS badge turning "
+    "into a number or percentage, progress ring or loading spinner replacing the VS badge, "
+    "second percentage indicator, percentage or number appearing anywhere except next to "
+    "AI ANALYSIS, glow or bloom effect on a row that is not currently being animated, glowing "
+    "orb or blob artifacts, floating badge, distorted clock or status bar icons")
 
 # VIDEO_STYLE=marker — прежняя «рука вписывает счёт» (оставлена как запасная).
 NEGATIVE_MARKER = (
@@ -149,32 +153,25 @@ def _prompt_cyber(rows: list, first_row: int, last_row: int) -> str:
     order = "\n".join(lines)
     already = "Rows above already show their locked digits and stay untouched.\n" if first_row else ""
     return (
-        "Cinematic locked-off shot of a smartphone lying on a dark luxury desk, its screen ON and "
-        "showing the \"COINPLAY AI LAB\" prediction app. The phone never moves, is never picked up, "
-        "and absolutely NO hands, people, pens or markers enter the frame — this is a screen "
-        "recording of a live crypto-terminal app, not someone using a phone.\n"
-        "The app is mid-analysis and finishes during the clip: the \"AI ANALYSIS\" progress bar "
-        "under the team names grows steadily left to right with a gold glow, its percentage counts "
-        "up, and each model's row brightens from dim grey to white the moment that model's score "
-        "appears. On screen the empty score boxes fill THEMSELVES, one at a time, in this exact "
-        "order:\n"
+        "Cinematic locked-off shot of a smartphone lying on a dark luxury desk, screen ON, showing "
+        "the \"COINPLAY AI LAB\" prediction app. Phone never moves; NO hands, people, pens or markers "
+        "ever enter frame — a screen recording of a live crypto-terminal app.\n"
+        "Mid-analysis, finishing during the clip: the \"AI ANALYSIS\" bar under the team names grows "
+        "left to right with a gold glow, its percentage counts up — the ONLY percentage or progress "
+        "indicator anywhere on screen. The round gold VS badge between the two flags always shows "
+        "plain \"VS\", never a number or a ring. Each model's row brightens from dim grey to white as "
+        "its score appears. Empty score boxes fill THEMSELVES, one row at a time, in this order:\n"
         f"{already}{order}\n"
-        "How each digit arrives: the target box lights up, a fast holographic reel of scrambling "
-        "numerals rolls inside it for a beat like an odds ticker settling, then snaps and locks into "
-        "the final glowing yellow digit with a crisp pulse of light, a thin scanline sweep and a "
-        "brief bloom that spills onto the board around that box. Only the active box glows; every "
-        "later box stays completely empty and dark until its own turn, even though the end frame "
-        "already shows them filled. Never two boxes at once.\n"
-        "Digits are clean, sharp, precisely centred and sized to sit inside their box with margin, "
-        "and appear ONLY inside the two score boxes named above — never anywhere else on screen. "
-        "The two flag cards near the top of the screen are ordinary static photos of national flags: "
-        "they hold no digits, no glow, no scramble effect, and look pixel-identical in every frame of "
-        "this clip, from the very first to the very last. Everything else — phone body, title, crests, "
-        "flag cards, team names, model names, icons, layout — stays perfectly still and unchanged, and "
-        "the desk around the phone stays exactly as it starts. Continuous rhythm with no idle pause: "
-        "the next box starts lighting up as the previous locks, action filling the whole clip. Rich "
-        "blacks, gold screen light glowing onto the desk around the phone, deep violet accents. "
-        "Expensive fintech-terminal mood."
+        "Each digit: its box lights up, numerals scramble like an odds ticker for a beat, then snap "
+        "into a glowing yellow digit with a scanline pulse and a brief bloom — the bloom stays inside "
+        "that one row, never spreading to another row or to the flag cards. Only the active box "
+        "glows; later boxes stay empty and dark until their own turn. Never two boxes, or two rows, "
+        "animate at once.\n"
+        "Digits are clean, sharp, centred, sized to fit their box, appearing ONLY in the two boxes "
+        "named above. Flag cards are static photos: no digits, no glow, pixel-identical every frame. "
+        "Everything else — phone body, title, crests, VS badge, names, icons, layout, desk — stays "
+        "perfectly still. Continuous rhythm, no idle pause. Rich blacks, gold screen light on the "
+        "desk, deep violet accents. Expensive fintech-terminal mood."
     )
 
 

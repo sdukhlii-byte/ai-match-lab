@@ -521,7 +521,7 @@ def main() -> None:
             run(mt, args)
             done.append(label)
             if mt.get("id"):  # только у матчей из --auto (fixtures.py) — иначе нечего отмечать
-                state.mark_posted(str(mt["id"]))
+                state.mark_posted(str(mt["id"]), competition=mt.get("competition", ""))
         except Exception as e:
             failed.append(label)
             log.exception("Матч %s не собран: %s", label, e)

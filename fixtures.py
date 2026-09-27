@@ -21,7 +21,7 @@ import logging
 import requests
 
 import state
-from config import env_bool, env_float, env_list, require_env
+from config import env_bool, env_float, env_int, env_list, require_env
 
 log = logging.getLogger("fixtures")
 
@@ -187,9 +187,25 @@ def fetch(days_ahead: int = 10, per_run: int = 1) -> list[dict]:
     else:
         fresh = candidates
 
-    picked = fresh[:per_run]
-    log.info("Подобрано %d матч(ей) из %d кандидатов (%d уже публиковались): %s",
-             len(picked), len(candidates), len(candidates) - len(fresh),
+    # Без этого «ближайший по времени» почти всегда оказывается одной и той же
+    # лигой — не потому что кто-то повторяется (это уже отсекли выше), а
+    # потому что у лиги с плотным календарём (например, Серии A Бразилии,
+    # где матчи почти каждый день) банально больше кандидатов на роль
+    # «самый близкий». Избегаем последних N опубликованных турниров, если
+    # это оставляет хоть какой-то выбор — иначе (пауза во всех остальных
+    # лигах) не блокируем публикацию, просто снова берём то, что есть.
+    avoid_n = env_int("FIXTURES_AVOID_LAST_COMPETITIONS", 2, lo=0, hi=10)
+    rotated = fresh
+    if avoid_n:
+        avoid = set(state.recent_competitions(avoid_n))
+        if avoid:
+            candidates_wo_recent = [c for c in fresh if c["competition"] not in avoid]
+            if candidates_wo_recent:
+                rotated = candidates_wo_recent
+
+    picked = rotated[:per_run]
+    log.info("Подобрано %d матч(ей) из %d кандидатов (%d уже публиковались, %d отсеяно ротацией лиг): %s",
+             len(picked), len(candidates), len(candidates) - len(fresh), len(fresh) - len(rotated),
              "; ".join(f'{c["home"]} vs {c["away"]} ({c["competition"]}, {c["date"]})'
                        for c in picked))
     return picked

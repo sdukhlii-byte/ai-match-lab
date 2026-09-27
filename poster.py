@@ -276,10 +276,14 @@ def _flag_card(img: Image.Image, flag: Image.Image, box) -> None:
 
 
 def _vs(d, cx, cy) -> None:
-    r = 86
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=PANEL, outline=PRIMARY, width=7)
-    d.ellipse([cx - r + 12, cy - r + 12, cx + r - 12, cy + r - 12], outline=YELLOW, width=3)
-    _text_c(d, (cx, cy - 4), "VS", _font("RobotoCondensed-Bold.ttf", 78), YELLOW)
+    # Увеличенный радиус и текст — на реальной генерации маленький круглый
+    # золотой бейдж видео-модель периодически принимала за индикатор
+    # прогресса и подменяла "VS" на выдуманный процент (см. промт: там же
+    # явно запрещено). Чем крупнее и однозначнее буквы, тем меньше повод.
+    r = 100
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=PANEL, outline=PRIMARY, width=8)
+    d.ellipse([cx - r + 14, cy - r + 14, cx + r - 14, cy + r - 14], outline=YELLOW, width=3)
+    _text_c(d, (cx, cy - 4), "VS", _font("RobotoCondensed-Bold.ttf", 92), YELLOW)
 
 
 # Геометрия таблицы — нужна и для рендера, и для рукописных цифр.
@@ -425,7 +429,8 @@ META_Y = 566            # лига и дата
 FLAG_TOP, FLAG_BOT = 636, 916
 VS_Y = 776
 NAMES_Y = 978           # подписи команд под эмблемами
-PROGRESS_Y = 1094       # центр полосы «AI анализирует»
+PROGRESS_Y = 1120       # центр полосы «AI анализирует»; ниже, чем раньше — после
+                        # укрупнения шрифта подпись стала задевать имена команд
 CONSENSUS_Y0 = 2318     # верх плашки с вердиктом
 CONSENSUS_H = 170
 CTA_Y0 = 2516           # нижняя строка с призывом и 18+
@@ -486,15 +491,20 @@ def _progress(img: Image.Image, done: int, total: int) -> None:
         return
     d = ImageDraw.Draw(img)
     frac = max(0.0, min(1.0, done / total))
-    label = _font("RobotoCondensed-SemiBold.ttf", 34)
-    d.text((TABLE_X0 + 6, PROGRESS_Y - 44), "AI ANALYSIS", font=label, fill=GREY, anchor="lm")
-    d.text((TABLE_X1 - 6, PROGRESS_Y - 44), f"{int(round(frac * 100))}%",
-           font=_font("RobotoCondensed-Bold.ttf", 36),
-           fill=YELLOW if frac >= 1 else WHITE, anchor="rm")
+    # Раньше подпись/процент/полоса были совсем мелкими (34/36px на холсте
+    # 1240px) — на реальной генерации видео-модель не могла удержать такой
+    # мелкий текст чётким: он плыл, путался, а то и вовсе подменялся
+    # выдуманным бейджем (см. _vs). Крупнее и толще — меньше свободы для
+    # интерпретации.
+    label = _font("RobotoCondensed-Bold.ttf", 48)
+    d.text((TABLE_X0 + 6, PROGRESS_Y - 54), "AI ANALYSIS", font=label, fill=WHITE, anchor="lm")
+    d.text((TABLE_X1 - 6, PROGRESS_Y - 54), f"{int(round(frac * 100))}%",
+           font=_font("RobotoCondensed-Bold.ttf", 52),
+           fill=YELLOW, anchor="rm")
 
     x0, x1 = TABLE_X0 + 6, TABLE_X1 - 6
-    y0, y1 = PROGRESS_Y - 8, PROGRESS_Y + 10
-    d.rounded_rectangle([x0, y0, x1, y1], radius=9, fill=(24, 22, 32), outline=(46, 42, 58), width=2)
+    y0, y1 = PROGRESS_Y - 4, PROGRESS_Y + 22
+    d.rounded_rectangle([x0, y0, x1, y1], radius=13, fill=(24, 22, 32), outline=(46, 42, 58), width=2)
     if frac > 0:
         # img здесь всегда RGBA: _background() отдаёт RGBA, а _card_texture()
         # переводит в RGB уже после всей отрисовки.
