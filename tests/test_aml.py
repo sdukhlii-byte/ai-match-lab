@@ -329,10 +329,17 @@ def test_parse_scores_errors():
 
 
 def test_segments_split():
-    assert generate._segments(5) == [(0, 5)]
+    # По умолчанию (SEGMENTS не задан) — один сегмент на строку: меньше клеток
+    # на сегмент, рука успевает физически коснуться каждой.
+    assert generate._segments(5) == [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
     os.environ["SEGMENTS"] = "3"
     try:
         assert generate._segments(5) == [(0, 2), (2, 4), (4, 5)]
+    finally:
+        del os.environ["SEGMENTS"]
+    os.environ["SEGMENTS"] = "1"
+    try:
+        assert generate._segments(5) == [(0, 5)]
     finally:
         del os.environ["SEGMENTS"]
 
@@ -422,6 +429,67 @@ def test_prompt_stays_under_fal_length_limit():
     for first, last in ((0, 5), (0, 3), (3, 5)):
         assert len(video.build_prompt(rows, first, last)) < 2500
     assert len(video.NEGATIVE) < 2500
+
+
+def _tiny_image():
+    return Image.new("RGB", (4, 4))
+
+
+def test_generate_segment_dispatches_to_openrouter(monkeypatch):
+    monkeypatch.setenv("VIDEO_PROVIDER", "or-veo31lite")
+    calls = []
+    monkeypatch.setattr(video, "_or_submit", lambda model, prompt, first, last: calls.append(model) or "job1")
+    monkeypatch.setattr(video, "_or_poll", lambda job_id: {"unsigned_urls": ["https://x/video.mp4"]})
+    monkeypatch.setattr(video, "_download", lambda url, out_path: calls.append(("dl", url, out_path)))
+    monkeypatch.setattr(video, "_run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fal не должен вызываться")))
+
+    video.generate_segment(_tiny_image(), _tiny_image(), "prompt", "/tmp/out.mp4")
+    assert calls[0] == "google/veo-3.1-lite"
+    assert calls[1] == ("dl", "https://x/video.mp4", "/tmp/out.mp4")
+
+
+def test_generate_segment_dispatches_to_fal(monkeypatch):
+    monkeypatch.setenv("VIDEO_PROVIDER", "kling25")
+    monkeypatch.setattr(video, "_run", lambda endpoint, payload: {"video": {"url": "https://x/v.mp4"}})
+    monkeypatch.setattr(video, "_download", lambda url, out_path: None)
+    monkeypatch.setattr(video, "_or_submit",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("openrouter не должен вызываться")))
+
+    assert video.generate_segment(_tiny_image(), _tiny_image(), "prompt", "/tmp/out.mp4") == "/tmp/out.mp4"
+
+
+def test_unknown_video_provider_lists_both_backends(monkeypatch):
+    monkeypatch.setenv("VIDEO_PROVIDER", "does-not-exist")
+    with pytest.raises(video.VideoError) as exc:
+        video.generate_segment(_tiny_image(), _tiny_image(), "prompt", "/tmp/out.mp4")
+    assert "or-veo31lite" in str(exc.value) and "kling25" in str(exc.value)
+
+
+def test_or_submit_payload_shape(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    captured = {}
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {"id": "job123"}
+
+    def fake_post(url, headers, json, timeout):
+        captured["url"], captured["headers"], captured["json"] = url, headers, json
+        return FakeResp()
+
+    monkeypatch.setattr(video.requests, "post", fake_post)
+    job_id = video._or_submit("google/veo-3.1-lite", "a prompt", _tiny_image(), _tiny_image())
+
+    assert job_id == "job123"
+    assert captured["url"] == f"{video.OR_API}/videos"
+    assert captured["headers"]["Authorization"] == "Bearer test-key"
+    body = captured["json"]
+    assert body["model"] == "google/veo-3.1-lite"
+    assert body["aspect_ratio"] == "9:16"
+    types = {f["frame_type"] for f in body["frame_images"]}
+    assert types == {"first_frame", "last_frame"}
 
 
 if __name__ == "__main__":

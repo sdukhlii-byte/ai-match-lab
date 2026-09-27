@@ -6,13 +6,23 @@
 дорисовывает между ними руку с маркером. Итоговые цифры гарантированно
 совпадают с прогнозами и подписью поста.
 
-Провайдеры (VIDEO_PROVIDER):
-  kling25 — fal-ai/kling-video/v2.5-turbo/pro/image-to-video + tail_image_url
-            (по умолчанию): ~$0.70 за 10-секундный сегмент, без звука —
-            в разы дешевле veo31 при похожем качестве самой руки/письма;
-  veo31   — fal-ai/veo3.1/first-last-frame-to-video: самый фотореалистичный,
-            8 сек, 9:16, со звуком маркера, но $0.40/сек — на SEGMENTS=2
-            это ~$6.4 за ролик.
+Провайдеры (VIDEO_PROVIDER) — два разных API, оба поддерживают first-frame +
+last-frame (нужно и там, и там: см. выше почему):
+
+  Через OpenRouter (openrouter.ai/docs/guides/overview/multimodal/video-generation),
+  тот же OPENROUTER_API_KEY, что уже используется для прогнозов в predictions.py:
+    or-veo31lite      (по умолчанию) — google/veo-3.1-lite, $0.03/сек без звука
+                       на 720p — на 8-секундный сегмент это ~$0.24, тот же
+                       "почерк" Google Veo, что и дорогой veo31, но кратно дешевле;
+    or-seedance-fast  — bytedance/seedance-2.0-fast, ~$0.04/сек, тоже дёшево;
+    or-seedance-mini  — bytedance/seedance-2.0-mini, ~$0.034/сек, ещё дешевле,
+                       но модель меньше — качество может просесть.
+
+  Через fal.ai (нужен отдельный FAL_KEY):
+    kling25 — fal-ai/kling-video/v2.5-turbo/pro/image-to-video: ~$0.70 за
+              10-секундный сегмент, без звука;
+    veo31   — fal-ai/veo3.1/first-last-frame-to-video: самый фотореалистичный,
+              8 сек, 9:16, со звуком, но $0.40/сек — на SEGMENTS=2 это ~$6.4.
 """
 
 from __future__ import annotations
@@ -34,10 +44,19 @@ from config import env_bool, env_float, env_int, env_str, require_env
 log = logging.getLogger("video")
 
 QUEUE = "https://queue.fal.run"
+OR_API = "https://openrouter.ai/api/v1"
 
+# fal.ai — нужен FAL_KEY
 PROVIDERS = {
     "veo31": "fal-ai/veo3.1/first-last-frame-to-video",
     "kling25": "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
+}
+
+# OpenRouter — нужен OPENROUTER_API_KEY (тот же, что и для прогнозов)
+OPENROUTER_MODELS = {
+    "or-veo31lite": "google/veo-3.1-lite",
+    "or-seedance-fast": "bytedance/seedance-2.0-fast",
+    "or-seedance-mini": "bytedance/seedance-2.0-mini",
 }
 
 # fal у Kling режет prompt/negative_prompt на 2500 символов — держим с запасом,
@@ -47,7 +66,9 @@ NEGATIVE = ("text changes, distorted letters, extra boxes, moving paper, camera 
             "fingers pointing at boxes, ghost or duplicate digits, digits appearing before written, "
             "wrong-box ink, two boxes filled at once, digits bleeding between rows, black/dark ink, "
             "ink color not matching marker tip, hand freezing mid-action, idle pauses, marker "
-            "hovering without touching paper, dead time, action stopping before video ends")
+            "hovering without touching paper, dead time, action stopping before video ends, second "
+            "hand, another hand holding the paper, digit popping in without the marker drawing it, "
+            "ink appearing where the tip never travelled, instant or teleporting digits")
 
 
 class VideoError(RuntimeError):
@@ -80,21 +101,27 @@ def build_prompt(rows: list, first_row: int, last_row: int) -> str:
     order = "\n".join(lines)
     already = ("Rows above stay already-filled and untouched.\n") if first_row else ""
     return (
-        "Static top-down locked-off smartphone shot, no camera movement or zoom. A printed "
-        "\"COINPLAY AI LAB\" prediction sheet lies flat on a wooden table, never moves.\n"
-        "Left hand rests still, holding only the far-left margin — never on a box/flag/text, never "
-        "moves or hovers elsewhere.\n"
-        "Right hand holds a bright yellow/gold marker; the ink is the SAME bright yellow as the "
-        "marker itself (never black/dark). It fills ONE empty box at a time, in this exact order:\n"
+        "Locked-off smartphone shot from slightly above and to the side (not perfectly flat "
+        "top-down), no camera movement or zoom. A printed \"COINPLAY AI LAB\" prediction sheet "
+        "lies flat and still on a dark wooden table, weighted down on its own, needing no hand to "
+        "hold it. A small potted plant and a dark mug sit softly out of focus in a back corner of "
+        "frame for a lived-in desk feel.\n"
+        "Only ONE hand is ever visible in the whole clip — the one holding a bright yellow/gold "
+        "marker; the ink is the SAME bright yellow as the marker itself (never black/dark). No "
+        "second hand appears at any point. The marker fills ONE empty box at a time, in this exact "
+        "order:\n"
         f"{already}{order}\n"
-        "Rules: marker tip touches at most one box at a time — the one being written — never "
-        "brushing others. No two boxes fill simultaneously. A digit appears ONLY once the marker has "
-        "drawn it — later rows stay blank while an earlier row is still being written, even though "
-        "the end frame already shows them filled. Each digit: one confident continuous yellow stroke, "
-        "ink exactly where the tip touches. The hand moves smoothly box to box with NO idle pause or "
-        "freezing — writing continues throughout the whole clip, finishing exactly when done. "
-        "Everything else (title, flags, icons, unreached boxes) stays sharp and unchanged. Soft "
-        "daylight, realistic hands, subtle marker squeak. At the end both hands lift out of frame."
+        "Rules: the marker tip must be seen physically touching and dragging across the paper for "
+        "every single digit — a digit only exists where the tip visibly travelled; it never pops in, "
+        "appears instantly, or shows up on a box the tip hasn't reached. The tip touches at most one "
+        "box at a time — the one being written — never brushing others. No two boxes fill "
+        "simultaneously. Later rows stay blank while an earlier row is still being written, even "
+        "though the end frame already shows them filled. Each digit: one confident continuous yellow "
+        "stroke, ink exactly where the tip drags. The hand moves smoothly and unhurriedly box to box "
+        "with NO idle pause or freezing — visible drawing motion fills the entire clip, finishing "
+        "exactly when done. Everything else (title, flags, icons, unreached boxes) stays sharp and "
+        "unchanged. Soft daylight, realistic hand, subtle marker squeak. At the end the hand lifts "
+        "out of frame."
     )
 
 
@@ -191,8 +218,90 @@ def _download(url: str, out_path: str) -> None:
                     f.write(chunk)
     if os.path.getsize(tmp) < 10_000:  # пустышка вместо ролика — лучше узнать сразу
         os.remove(tmp)
-        raise VideoError(f"fal: скачанный файл подозрительно мал ({url})")
+        raise VideoError(f"скачанный файл подозрительно мал ({url})")
     os.replace(tmp, out_path)
+
+
+# ------------------------------------------------------------ openrouter ---
+
+def _or_headers() -> dict:
+    key = require_env(
+        "OPENROUTER_API_KEY",
+        "Ключ OpenRouter нужен и для видео (or-*), и для прогнозов моделей — "
+        "один и тот же ключ.")
+    return {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": env_str("OPENROUTER_REFERER", "https://t.me/aimatchlab"),
+        "X-Title": "AI Match Lab",
+    }
+
+
+def _or_frame(img: Image.Image, frame_type: str) -> dict:
+    return {"type": "image_url", "image_url": {"url": _data_uri(img)}, "frame_type": frame_type}
+
+
+def _or_submit(model: str, prompt: str, first: Image.Image, last: Image.Image) -> str:
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        # По умолчанию SEGMENTS даёт 1 строку (2 клетки) на сегмент — 4 сек с
+        # запасом хватает руке физически дойти и коснуться обеих клеток; для
+        # veo-3.1-lite это ещё и минимально короткая из поддерживаемых (4/6/8).
+        "duration": env_int("OR_VIDEO_DURATION", 4, lo=1, hi=15),
+        "resolution": env_str("OR_VIDEO_RESOLUTION", "720p"),
+        "aspect_ratio": "9:16",
+        "generate_audio": env_bool("OR_VIDEO_AUDIO", False),
+        "frame_images": [_or_frame(first, "first_frame"), _or_frame(last, "last_frame")],
+    }
+    r = requests.post(f"{OR_API}/videos", headers=_or_headers(), json=payload, timeout=120)
+    if r.status_code >= 400:
+        raise VideoError(f"openrouter submit {model} -> {r.status_code}: {r.text[:500]}")
+    try:
+        job = r.json()
+    except ValueError as e:
+        raise VideoError(f"openrouter submit {model}: ответ не JSON: {r.text[:200]}") from e
+    job_id = job.get("id")
+    if not job_id:
+        raise VideoError(f"openrouter: в ответе нет id задачи: {str(job)[:300]}")
+    log.info("openrouter: задача %s поставлена (%s)", job_id, model)
+    return job_id
+
+
+def _or_poll(job_id: str, timeout: int | None = None) -> dict:
+    timeout = timeout or env_int("OR_VIDEO_TIMEOUT_SEC", 900, lo=60, hi=3600)
+    url = f"{OR_API}/videos/{job_id}"
+    deadline = time.time() + timeout
+    delay, last_status = 3.0, ""
+    while time.time() < deadline:
+        time.sleep(delay)
+        delay = min(delay * 1.3, 15.0)  # мягкий backoff, как у fal-луп ниже
+        try:
+            r = requests.get(url, headers=_or_headers(), timeout=60)
+            r.raise_for_status()
+            s = r.json()
+        except (requests.RequestException, ValueError) as e:
+            log.warning("openrouter: статус недоступен (%s) — повторю", e)
+            continue
+        st = (s.get("status") or "").lower()
+        if st != last_status:
+            log.info("openrouter: %s", st or "?")
+            last_status = st
+        if st == "completed":
+            cost = (s.get("usage") or {}).get("cost")
+            if cost is not None:
+                log.info("openrouter: сегмент стоил $%s", cost)
+            return s
+        if st in ("failed", "cancelled", "expired"):
+            raise VideoError(f"openrouter: задача {st}: {str(s)[:400]}")
+    raise VideoError(f"openrouter: не дождался результата за {timeout} сек (id={job_id})")
+
+
+def _or_video_url(result: dict) -> str:
+    urls = result.get("unsigned_urls") or []
+    if urls and urls[0]:
+        return urls[0]
+    raise VideoError(f"openrouter: в ответе нет unsigned_urls: {str(result)[:300]}")
 
 
 def _payload(provider: str, first: Image.Image, last: Image.Image, prompt: str) -> dict:
@@ -223,24 +332,35 @@ def _payload(provider: str, first: Image.Image, last: Image.Image, prompt: str) 
 
 
 def generate_segment(first: Image.Image, last: Image.Image, prompt: str, out_path: str) -> str:
-    provider = env_str("VIDEO_PROVIDER", "kling25").lower()
-    if provider not in PROVIDERS:
-        raise VideoError(f"VIDEO_PROVIDER={provider!r} — известны только "
-                         f"{', '.join(sorted(PROVIDERS))}")
-    endpoint = PROVIDERS[provider]
-    payload = _payload(provider, first, last, prompt)
+    provider = env_str("VIDEO_PROVIDER", "or-veo31lite").lower()
+    if provider in OPENROUTER_MODELS:
+        model = OPENROUTER_MODELS[provider]
+
+        def _once():
+            job_id = _or_submit(model, prompt, first, last)
+            result = _or_poll(job_id)
+            _download(_or_video_url(result), out_path)
+    elif provider in PROVIDERS:
+        endpoint = PROVIDERS[provider]
+        payload = _payload(provider, first, last, prompt)
+
+        def _once():
+            result = _run(endpoint, payload)
+            _download(_video_url(result), out_path)
+    else:
+        known = sorted(OPENROUTER_MODELS) + sorted(PROVIDERS)
+        raise VideoError(f"VIDEO_PROVIDER={provider!r} — известны только {', '.join(known)}")
 
     attempts = env_int("FAL_ATTEMPTS", 2, lo=1, hi=5)
     last_err: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            result = _run(endpoint, payload)
-            _download(_video_url(result), out_path)
+            _once()
             log.info("Сегмент сохранён: %s", out_path)
             return out_path
         except (VideoError, requests.RequestException) as e:
             last_err = e
-            log.warning("fal: попытка %d/%d не удалась — %s", attempt, attempts, e)
+            log.warning("видео: попытка %d/%d не удалась — %s", attempt, attempts, e)
             if attempt < attempts:
                 time.sleep(5 * attempt + random.uniform(0, 2))
     raise VideoError(f"Не удалось сгенерировать сегмент за {attempts} попыт(ки): {last_err}")
