@@ -47,11 +47,15 @@ BG_2 = (13, 12, 20)        # #0D0C14  заливка клеток счёта
 BG_3 = (20, 15, 34)        # #140F22  низ градиента, чуть тёплее
 PANEL = (15, 13, 24)       # #0F0D18  панель таблицы
 SECONDARY = (74, 56, 122)  # #4A387A  приглушённый фиолет для свечений
-VIOLET = (124, 88, 240)    # #7C58F0  фирменный фиолет (подсветы, разделители)
+VIOLET = (124, 88, 240)    # #7C58F0  фирменный фиолет — оставлен только как редкий акцент
 LILAC = (186, 160, 255)    # #BAA0FF
-GOLD = (230, 181, 74)      # #E6B54A  основной акцент: рамки, обводки
-PRIMARY = GOLD             # бывший фиолетовый primary теперь золото
-YELLOW = (255, 214, 92)    # #FFD65C  яркое золото: счёт, неон цифр
+# Референс trading-терминала — весь акцент зелёный неон вместо золота
+# (см. запрос «ближе сильно по стилю к этому»): рамки, свечение, прогресс,
+# статусные индикаторы. Переменные оставлены с прежними именами, чтобы не
+# трогать все места использования — сменился только цвет.
+GOLD = (94, 224, 138)      # #5EE08A  основной акцент: рамки, обводки, свечение
+PRIMARY = GOLD
+YELLOW = (150, 255, 189)   # #96FFBD  ярко-мятный: счёт, неон цифр
 WHITE = (247, 247, 250)
 GREY = (150, 146, 170)     # второстепенный текст
 INK = YELLOW               # цвет цифр на тёмной карточке
@@ -102,6 +106,7 @@ class Match:
     date: str = ""
     consensus: str = ""       # кого выбрали модели: «SÃO PAULO FC»
     consensus_note: str = ""  # насколько единодушно: «4 OF 5 MODELS AGREE»
+    consensus_pct: int = 0    # то же самое согласие числом: round(n / total * 100)
 
 
 def _overlay(base: Image.Image, tile: Image.Image, xy: tuple[int, int]) -> None:
@@ -526,18 +531,33 @@ def _team_names(img: Image.Image, m: Match) -> None:
 
 
 def _status_bar(d: ImageDraw.ImageDraw) -> None:
-    """Строка состояния и «дырка» фронталки.
+    """Строка состояния экрана.
 
-    Самая дешёвая деталь, которая мгновенно читается как экран телефона, а не
-    как картинка: время слева, связь/wi-fi/батарея справа, камера по центру.
-    Время фиксированное — это оформление, а не реальные часы устройства.
+    Раньше это была ровно строка состояния телефона (часы, связь, wi-fi,
+    батарея, дырка фронталки) — но теперь корпус вокруг экрана уже не
+    телефон, а отдельный AI-прибор (см. _phone), и сигнал сотовой сети/wi-fi
+    на нём читались бы странно: у выделенного устройства нет SIM-карты.
+    Вместо них — статус самого прибора: время, индикатор «OFFLINE AI» с
+    точкой (вместо дырки камеры, которую заменяем явным «считает локально,
+    без облака» — тем, о чём и просили) и батарея (устройство всё равно
+    питается от аккумулятора, это не противоречит железному корпусу).
     """
     d.text((88, STATUS_Y), "20:45", font=_font("RobotoCondensed-Bold.ttf", 46),
            fill=WHITE, anchor="lm")
 
+    # «OFFLINE AI» с точкой по центру — вместо дырки фронтальной камеры,
+    # которой у выделенного прибора попросту нет, и явно про офлайн-природу
+    # устройства, а не «облачное приложение»
     cx = PAPER_W // 2
-    d.ellipse([cx - 18, STATUS_Y - 18, cx + 18, STATUS_Y + 18], fill=(3, 3, 6))
-    d.ellipse([cx - 18, STATUS_Y - 18, cx + 18, STATUS_Y + 18], outline=(30, 30, 38), width=2)
+    live_font = _font("RobotoCondensed-Bold.ttf", 34)
+    label = "OFFLINE AI"
+    live_w = d.textlength(label, font=live_font)
+    dot_r = 9
+    gap = 14
+    total_w = dot_r * 2 + gap + live_w
+    dot_cx = cx - total_w / 2 + dot_r
+    d.ellipse([dot_cx - dot_r, STATUS_Y - dot_r, dot_cx + dot_r, STATUS_Y + dot_r], fill=LED_GOLD)
+    d.text((dot_cx + dot_r + gap, STATUS_Y), label, font=live_font, fill=GREY, anchor="lm")
 
     right = PAPER_W - 88
     # батарея (справа налево): корпус, заряд, контакт
@@ -548,20 +568,6 @@ def _status_bar(d: ImageDraw.ImageDraw) -> None:
     d.rounded_rectangle([bx0, by0, bx1, by0 + bh], radius=9, outline=WHITE, width=3)
     d.rounded_rectangle([bx0 + 6, by0 + 6, bx0 + 6 + int((bw - 12) * 0.78), by0 + bh - 6],
                         radius=5, fill=WHITE)
-
-    # wi-fi: три дуги и точка
-    wx = bx0 - 44
-    for r in (12, 23, 34):
-        d.arc([wx - r, STATUS_Y - r + 10, wx + r, STATUS_Y + r + 10],
-              start=215, end=325, fill=WHITE, width=5)
-    d.ellipse([wx - 5, STATUS_Y + 10, wx + 5, STATUS_Y + 20], fill=WHITE)
-
-    # уровень сигнала: четыре растущих столбика
-    sx = wx - 96
-    for i in range(4):
-        hgt = 11 + i * 8
-        d.rounded_rectangle([sx + i * 15, STATUS_Y + 14 - hgt, sx + i * 15 + 9, STATUS_Y + 16],
-                            radius=3, fill=WHITE)
 
 
 def _fit_font(d: ImageDraw.ImageDraw, text: str, max_w: int,
@@ -578,40 +584,73 @@ def _fit_font(d: ImageDraw.ImageDraw, text: str, max_w: int,
 def _consensus_bar(img: Image.Image, m: Match, lit: bool) -> None:
     """Нижняя плашка с вердиктом моделей — главный вывод ролика.
 
-    Геометрия и текст одинаковы на всех кадрах, различается только яркость:
-    пока модели считают, плашка приглушена, а когда ответили все — загорается
-    золотом со свечением.
+    Разбита на две колонки, как на референс-терминале: слева — кого выбрали
+    модели, справа — сила согласия числом («CONFIDENCE») с мини-полосой.
+    И то, и другое — реально посчитанное согласие моделей (n / total), а не
+    выдуманный коэффициент: своих кф у нас нет, а выдумывать их в
+    iGaming-креативе нельзя. Геометрия и текст одинаковы на всех кадрах,
+    различается только яркость: пока модели считают, плашка приглушена, а
+    когда ответили все — загорается зелёным со свечением.
     """
     if not m.consensus:
         return
     d = ImageDraw.Draw(img)
     x0, x1 = TABLE_X0, TABLE_X1
     y0, y1 = CONSENSUS_Y0, CONSENSUS_Y0 + CONSENSUS_H
-    cx = (x0 + x1) // 2
-    d.rounded_rectangle([x0, y0, x1, y1], radius=26, fill=BG_2,
-                        outline=GOLD if lit else DIM_BOX, width=4)
-    d.text((cx, y0 + 34), "AI CONSENSUS", font=_font("RobotoCondensed-SemiBold.ttf", 34),
+    div_x = x0 + int((x1 - x0) * 0.62)
+    lcx = (x0 + div_x) // 2
+    rcx = (div_x + x1) // 2
+    on = GOLD if lit else DIM_BOX
+    d.rounded_rectangle([x0, y0, x1, y1], radius=26, fill=BG_2, outline=on, width=4)
+    d.line([div_x, y0 + 24, div_x, y1 - 24], fill=on, width=2)
+
+    d.text((lcx, y0 + 34), "AI CONSENSUS", font=_font("RobotoCondensed-SemiBold.ttf", 32),
+           fill=GREY if lit else DIM_NAME, anchor="mm")
+    d.text((rcx, y0 + 34), "CONFIDENCE", font=_font("RobotoCondensed-SemiBold.ttf", 32),
            fill=GREY if lit else DIM_NAME, anchor="mm")
 
     text = m.consensus.upper()
-    font = _fit_font(d, text, x1 - x0 - 70, "RobotoCondensed-Bold.ttf", 64, 32)
+    font = _fit_font(d, text, div_x - x0 - 50, "RobotoCondensed-Bold.ttf", 58, 30)
+    pct_text = f"{m.consensus_pct}%"
+    pct_font = _font("ChakraPetch-Bold.ttf", 60)
+
+    # мини-полоса согласия под процентом — та же ширина заливки, что и у
+    # AI ANALYSIS выше, только короче: это один и тот же принцип «яркость и
+    # заполнение вместо новой анимации»
+    bar_x0, bar_x1 = div_x + 30, x1 - 30
+    bar_y0, bar_y1 = y0 + 118, y0 + 132
+    frac = max(0.0, min(1.0, m.consensus_pct / 100))
+    bar_fill_x = bar_x0 + max(6, int((bar_x1 - bar_x0) * frac))
+
     if not lit:
-        d.text((cx, y0 + 90), text, font=font, fill=HIDDEN, anchor="mm")
+        d.text((lcx, y0 + 92), text, font=font, fill=HIDDEN, anchor="mm")
         if m.consensus_note:
-            d.text((cx, y0 + 140), m.consensus_note.upper(),
-                   font=_font("RobotoCondensed-SemiBold.ttf", 36), fill=HIDDEN, anchor="mm")
+            d.text((lcx, y0 + 142), m.consensus_note.upper(),
+                   font=_font("RobotoCondensed-SemiBold.ttf", 32), fill=HIDDEN, anchor="mm")
+        d.text((rcx, y0 + 80), pct_text, font=pct_font, fill=HIDDEN, anchor="mm")
+        d.rounded_rectangle([bar_x0, bar_y0, bar_x1, bar_y1], radius=7, fill=(24, 22, 32),
+                            outline=(46, 42, 58), width=2)
         return
 
     halo = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(halo).text((cx, y0 + 90), text, font=font, fill=YELLOW + (255,), anchor="mm")
-    img.alpha_composite(halo.filter(ImageFilter.GaussianBlur(18)))
+    hd = ImageDraw.Draw(halo)
+    hd.text((lcx, y0 + 92), text, font=font, fill=YELLOW + (255,), anchor="mm")
+    hd.text((rcx, y0 + 80), pct_text, font=pct_font, fill=YELLOW + (255,), anchor="mm")
+    img.alpha_composite(halo.filter(ImageFilter.GaussianBlur(16)))
     d = ImageDraw.Draw(img)
-    d.text((cx, y0 + 90), text, font=font, fill=(255, 248, 206), anchor="mm")
-    # Сила согласия — главный аргумент вместо коэффициента: своих кф у нас нет,
-    # а выдумывать их в iGaming-креативе нельзя.
+    d.text((lcx, y0 + 92), text, font=font, fill=(255, 248, 206), anchor="mm")
+    # Сила согласия — главный аргумент вместо коэффициента.
     if m.consensus_note:
-        d.text((cx, y0 + 140), m.consensus_note.upper(),
-               font=_font("RobotoCondensed-SemiBold.ttf", 36), fill=GOLD, anchor="mm")
+        d.text((lcx, y0 + 142), m.consensus_note.upper(),
+               font=_font("RobotoCondensed-SemiBold.ttf", 32), fill=GOLD, anchor="mm")
+    d.text((rcx, y0 + 80), pct_text, font=pct_font, fill=(255, 248, 206), anchor="mm")
+    d.rounded_rectangle([bar_x0, bar_y0, bar_x1, bar_y1], radius=7, fill=(24, 22, 32),
+                        outline=(46, 42, 58), width=2)
+    bar = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(bar).rounded_rectangle([bar_x0, bar_y0, bar_fill_x, bar_y1], radius=7,
+                                          fill=YELLOW + (255,))
+    img.alpha_composite(bar.filter(ImageFilter.GaussianBlur(10)))
+    img.alpha_composite(bar)
 
 
 def render_paper(m: Match, filled_rows: int = 0, seed: int = 7) -> Image.Image:
@@ -746,37 +785,291 @@ def _match_grain(sheet: Image.Image, seed: int, amount: float = 5.0) -> Image.Im
     return Image.fromarray(arr.astype("uint8"), "RGBA")
 
 
-BEZEL = 26          # рамка вокруг экрана, в пикселях экрана
-SCREEN_RADIUS = 96  # скругление самого экрана
-BODY_RADIUS = 122   # скругление корпуса
+BEZEL = 40          # рамка вокруг экрана, в пикселях экрана — толще, чем у
+                    # обычного смартфона: это отдельный прибор, а не телефон
+SCREEN_RADIUS = 30  # скругление самого экрана — угловатее, как у железа
+BODY_RADIUS = 40    # скругление корпуса — тоже угловатее
+VENT_COLOR = (8, 7, 12, 255)
+LED_GOLD = GOLD  # тот же зелёный неон, что и на экране — единая палитра устройства
 
 
-def _phone(screen: Image.Image) -> tuple[Image.Image, Image.Image]:
-    """Собирает смартфон вокруг готового экрана.
+def _core_glyph(d: ImageDraw.ImageDraw, cx: int, cy: int, r: int, seed: int = 7) -> None:
+    """Стилизованное «ядро» — несколько пересекающихся линий и узлов внутри
+    смотрового окошка, как схема чипа. Рисуется один раз поверх статичной
+    подложки окошка, само окошко не анимируется (см. _phone docstring)."""
+    rnd = random.Random(seed)
+    pts = [(cx + r * 0.6 * math.cos(a), cy + r * 0.6 * math.sin(a))
+           for a in (rnd.uniform(0, math.pi * 2) for _ in range(6))]
+    for i, (px, py) in enumerate(pts):
+        qx, qy = pts[(i + 1) % len(pts)]
+        d.line([px, py, qx, qy], fill=(190, 255, 210, 130), width=2)
+    for px, py in pts:
+        d.ellipse([px - 3, py - 3, px + 3, py + 3], fill=(200, 255, 220, 220))
+    d.ellipse([cx - 4, cy - 4, cx + 4, cy + 4], fill=(220, 255, 230, 255))
+
+
+def _button_glyph(d: ImageDraw.ImageDraw, kind: str, cx: float, cy: float, r: float,
+                   color: tuple) -> None:
+    """Простой гравированный значок внутри квадратной кнопки панели
+    управления — только базовые линии/фигуры, без мелких деталей, чтобы
+    видео-модели было легко держать их пиксель-в-пиксель неизменными
+    (та же логика, что и у _core_glyph: статичная геометрия, никакой
+    органики). `kind` — один из: bars, trend, doc, target, gear, sliders."""
+    w2 = max(2, int(r * 0.18))
+    if kind == "bars":
+        heights = (0.5, 1.0, 0.7)
+        bw = r * 0.5
+        x0 = cx - r
+        for i, hk in enumerate(heights):
+            bh = r * 1.5 * hk
+            bx = x0 + i * (bw + r * 0.15)
+            d.rectangle([bx, cy + r * 0.7 - bh, bx + bw, cy + r * 0.7], outline=color, width=w2)
+    elif kind == "trend":
+        pts = [(cx - r, cy + r * 0.4), (cx - r * 0.3, cy - r * 0.3),
+               (cx + r * 0.2, cy + r * 0.1), (cx + r, cy - r * 0.7)]
+        d.line(pts, fill=color, width=w2, joint="curve")
+    elif kind == "doc":
+        d.rounded_rectangle([cx - r * 0.7, cy - r, cx + r * 0.7, cy + r], radius=3,
+                             outline=color, width=w2)
+        for i in range(3):
+            ly = cy - r * 0.35 + i * r * 0.4
+            d.line([cx - r * 0.4, ly, cx + r * 0.4, ly], fill=color, width=max(1, w2 - 1))
+    elif kind == "target":
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=color, width=w2)
+        d.ellipse([cx - r * 0.4, cy - r * 0.4, cx + r * 0.4, cy + r * 0.4], outline=color, width=w2)
+        d.line([cx, cy - r, cx, cy + r], fill=color, width=1)
+        d.line([cx - r, cy, cx + r, cy], fill=color, width=1)
+    elif kind == "gear":
+        d.ellipse([cx - r * 0.55, cy - r * 0.55, cx + r * 0.55, cy + r * 0.55],
+                   outline=color, width=w2)
+        for a in range(0, 360, 45):
+            rad = math.radians(a)
+            x0, y0 = cx + r * 0.7 * math.cos(rad), cy + r * 0.7 * math.sin(rad)
+            x1, y1 = cx + r * 0.95 * math.cos(rad), cy + r * 0.95 * math.sin(rad)
+            d.line([x0, y0, x1, y1], fill=color, width=w2)
+    elif kind == "sliders":
+        xs = (cx - r * 0.6, cx, cx + r * 0.6)
+        levels = (0.2, -0.3, 0.5)
+        for x, lv in zip(xs, levels):
+            d.line([x, cy - r, x, cy + r], fill=color, width=1)
+            ky = cy + r * lv
+            d.ellipse([x - w2, ky - w2, x + w2, ky + w2], fill=color)
+    elif kind == "layers":
+        for i, dy in enumerate((-0.45, 0.0, 0.45)):
+            hw = r * (0.9 - i * 0.12)
+            cy2 = cy + r * dy * 0.7
+            d.line([cx - hw, cy2, cx, cy2 - r * 0.28], fill=color, width=w2)
+            d.line([cx, cy2 - r * 0.28, cx + hw, cy2], fill=color, width=w2)
+            d.line([cx - hw, cy2, cx, cy2 + r * 0.28], fill=color, width=w2)
+            d.line([cx, cy2 + r * 0.28, cx + hw, cy2], fill=color, width=w2)
+
+
+def _phone(screen: Image.Image, progress: float = 1.0) -> tuple[Image.Image, Image.Image]:
+    """Собирает вокруг готового экрана корпус выделенного AI-устройства —
+    не смартфон, а автономный локальный AI-терминал: угловатый корпус,
+    вентиляционные прорези, статусный светодиод, смотровое окошко с «ядром»
+    и гравированная табличка с серийником — набор деталей, которые обычно
+    видишь у специализированного железа (роутер, майнер, edge-AI бокс), а
+    не у бытового телефона. Ничего из этого не двигается между кадрами —
+    только светится сильнее по мере прогресса (см. `progress`), тем же
+    приёмом «яркость вместо анимации», что и полоса AI ANALYSIS на экране —
+    так видео-модели снова не приходится ничего выдумывать руками.
+
+    `progress` — доля прогноза, уже готового на этом кадре (0..1): статусный
+    светодиод, окошко ядра и нижняя LED-полоса светятся тем ярче, чем больше
+    прибор «насчитал» — на первом кадре они тусклые, на последнем — в полную
+    силу.
 
     Возвращает (устройство, маска-экрана): маска нужна, чтобы потом НЕ гасить
     экран светотенью сцены — он сам источник света — и чтобы посчитать
     засветку, которую экран бросает на стол.
     """
+    glow_k = 0.45 + 0.55 * max(0.0, min(1.0, progress))  # тусклее в начале, ярче к концу
     sw, sh = screen.size
-    w, h = sw + BEZEL * 2, sh + BEZEL * 2
+    # Нижний бортик заметно вырос — там теперь не табличка, а физическая
+    # панель управления (кнопки + диск), как на референс-фото трейдинг-
+    # терминала: устройство в первую очередь читается как отдельный прибор
+    # именно по этой панели, а не только по экрану.
+    top, side, bottom = int(BEZEL * 1.6), BEZEL, int(BEZEL * 11.5)
+    w, h = sw + side * 2, sh + top + bottom
 
     body = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     bd = ImageDraw.Draw(body)
-    bd.rounded_rectangle([0, 0, w - 1, h - 1], radius=BODY_RADIUS, fill=(16, 16, 20, 255))
-    # тонкий металлический кант по грани корпуса
-    bd.rounded_rectangle([0, 0, w - 1, h - 1], radius=BODY_RADIUS, outline=(92, 88, 104, 255), width=5)
-    bd.rounded_rectangle([3, 3, w - 4, h - 4], radius=BODY_RADIUS - 3, outline=(34, 32, 40, 255), width=3)
+    bd.rounded_rectangle([0, 0, w - 1, h - 1], radius=BODY_RADIUS, fill=(15, 15, 19, 255))
+    # тонкий металлический кант по грани корпуса — угловатый, промышленный
+    bd.rounded_rectangle([0, 0, w - 1, h - 1], radius=BODY_RADIUS, outline=(98, 94, 110, 255), width=6)
+    bd.rounded_rectangle([4, 4, w - 5, h - 5], radius=BODY_RADIUS - 4, outline=(36, 34, 42, 255), width=3)
+    # светящаяся кромка по самому верхнему краю корпуса — как на референсе:
+    # тонкая зелёная неоновая линия вдоль верхней грани, будто корпус
+    # засвечен изнутри по контуру. Статична, только ярче/тусклее (glow_k).
+    top_edge_glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(top_edge_glow).line([BODY_RADIUS, 5, w - BODY_RADIUS, 5],
+                                        fill=LED_GOLD + (int(220 * glow_k),), width=4)
+    body.alpha_composite(top_edge_glow.filter(ImageFilter.GaussianBlur(5)))
+    bd = ImageDraw.Draw(body)
+    bd.line([BODY_RADIUS, 4, w - BODY_RADIUS, 4], fill=LED_GOLD + (int(255 * glow_k),), width=2)
+    # лёгкая браш-текстура металла на верхнем бортике — тонкие горизонтальные
+    # линии чуть светлее/темнее фона, без этого корпус выглядит нарисованным
+    tex = ImageDraw.Draw(body)
+    for ty in range(6, top - 6, 3):
+        shade = 22 + (ty % 6)
+        tex.line([side // 2, ty, w - side // 2, ty], fill=(shade, shade, shade + 2, 90), width=1)
+
+    # вентиляционные прорези в верхнем бортике — как у железного AI-блока
+    n_vents, vent_w, vent_h = 7, 30, 7
+    gap = (w - n_vents * vent_w) / (n_vents + 1)
+    vy = top // 2 - vent_h // 2
+    for i in range(n_vents):
+        vx = int(gap * (i + 1) + vent_w * i)
+        bd.rounded_rectangle([vx, vy, vx + vent_w, vy + vent_h], radius=3, fill=VENT_COLOR)
+
+    # статусный светодиод сверху справа — маленький, но именно он продаёт
+    # идею «прибор включён и работает», не только светящийся экран
+    led_r, led_cx, led_cy = 6, w - side - 20, top // 2
+    glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse([led_cx - led_r * 3, led_cy - led_r * 3,
+                                  led_cx + led_r * 3, led_cy + led_r * 3],
+                                 fill=LED_GOLD + (int(140 * glow_k),))
+    body.alpha_composite(glow.filter(ImageFilter.GaussianBlur(6)))
+    bd = ImageDraw.Draw(body)
+    bd.ellipse([led_cx - led_r, led_cy - led_r, led_cx + led_r, led_cy + led_r], fill=LED_GOLD)
+
+    # смотровое окошко «ядра» — левый борт, по центру высоты: тёмное стекло,
+    # внутри тускло светится схема чипа. Единственная деталь корпуса, что
+    # явно говорит «внутри что-то само считает», а не просто светящийся
+    # экран — офлайн-устройство, а не витрина для приложения.
+    core_r = min(side, top) // 2 + 4
+    core_cx, core_cy = max(core_r + 4, side // 2), top + sh // 2
+    glass = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glass)
+    gd.ellipse([core_cx - core_r, core_cy - core_r, core_cx + core_r, core_cy + core_r],
+               fill=(10, 9, 14, 255), outline=(80, 76, 90, 255), width=3)
+    core_glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(core_glow).ellipse(
+        [core_cx - core_r, core_cy - core_r, core_cx + core_r, core_cy + core_r],
+        fill=LED_GOLD + (int(90 * glow_k),))
+    glass.alpha_composite(core_glow.filter(ImageFilter.GaussianBlur(8)))
+    _core_glyph(ImageDraw.Draw(glass), core_cx, core_cy, core_r)
+    body.alpha_composite(glass)
 
     # экран со скруглёнными углами
     rounded = Image.new("L", (sw, sh), 0)
     ImageDraw.Draw(rounded).rounded_rectangle([0, 0, sw - 1, sh - 1], radius=SCREEN_RADIUS, fill=255)
     screen = screen.convert("RGBA")
     screen.putalpha(rounded)
-    body.alpha_composite(screen, (BEZEL, BEZEL))
+    body.alpha_composite(screen, (side, top))
 
     screen_mask = Image.new("L", (w, h), 0)
-    screen_mask.paste(rounded, (BEZEL, BEZEL))
+    screen_mask.paste(rounded, (side, top))
+
+    # ---- физическая панель управления в нижнем бортике ----
+    # По референсу трейдинг-терминала: тонкая светящаяся кромка-разделитель
+    # между экраном и «железом», ряд квадратных кнопок с гравированными
+    # значками слева и большой хромированный поворотный диск справа. Это
+    # статичная геометрия — между кадрами не меняется ничего, кроме яркости
+    # (glow_k), так что видео-модели снова нечего домысливать руками.
+    panel_top = top + sh
+    div_y = panel_top + 26
+    div_x0, div_x1 = side + 20, w - side - 20
+    div_glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(div_glow).line([div_x0, div_y, div_x1, div_y],
+                                   fill=LED_GOLD + (int(200 * glow_k),), width=3)
+    body.alpha_composite(div_glow.filter(ImageFilter.GaussianBlur(6)))
+    bd = ImageDraw.Draw(body)
+    bd.line([div_x0, div_y, div_x1, div_y], fill=LED_GOLD + (int(235 * glow_k),), width=2)
+
+    margin = side + 26
+    panel_y0, panel_y1 = div_y + 30, h - 46  # низ панели, выше гравированной таблички
+    panel_h = panel_y1 - panel_y0
+    dial_d = int(min(panel_h, (w - margin * 2) * 0.34))
+    dial_cx = w - margin - dial_d // 2
+    dial_cy = panel_y0 + panel_h // 2
+
+    # ряд кнопок 4+3, как на референсе: верхний ряд — 4 в полную ширину сетки,
+    # нижний — 3, ровно под первыми тремя колонками верхнего; диск занимает
+    # место четвёртой колонки нижнего ряда, но по высоте — во всю панель.
+    grid_x1 = dial_cx - dial_d // 2 - 30
+    grid_w = grid_x1 - margin
+    cols, rows_n, gap = 4, 2, 16
+    btn_w = min((grid_w - gap * (cols - 1)) / cols, (panel_h - gap * (rows_n - 1)) / rows_n)
+    btn_w = max(36, btn_w)
+    grid_used_w = btn_w * cols + gap * (cols - 1)
+    gx0 = margin + max(0, (grid_w - grid_used_w) / 2)
+    grid_used_h = btn_w * rows_n + gap * (rows_n - 1)
+    gy0 = panel_y0 + max(0, (panel_h - grid_used_h) / 2)
+    row1 = ["bars", "trend", "doc", "target"]
+    row2 = ["gear", "sliders", "layers"]
+    for r, row_icons in ((0, row1), (1, row2)):
+        for c, icon in enumerate(row_icons):
+            bx0 = gx0 + c * (btn_w + gap)
+            by0 = gy0 + r * (btn_w + gap)
+            bx1, by1 = bx0 + btn_w, by0 + btn_w
+            bd.rounded_rectangle([bx0, by0, bx1, by1], radius=8,
+                                  fill=(24, 23, 29, 255), outline=(80, 76, 90, 255), width=2)
+            bd.rounded_rectangle([bx0 + 1, by0 + 1, bx1 - 1, by1 - 1], radius=7,
+                                  outline=(8, 8, 10, 255), width=1)
+            icon_cy = by0 + btn_w * 0.42
+            _button_glyph(bd, icon, (bx0 + bx1) / 2, icon_cy, btn_w * 0.26,
+                          LED_GOLD + (int(210 * glow_k),))
+            # короткая светлая «подпись»-полоска под значком — деталь кнопки
+            # физической панели, не текст, поэтому ничего не может «поплыть»
+            underline_y = by0 + btn_w * 0.76
+            uw = btn_w * 0.34
+            bd.rounded_rectangle(
+                [(bx0 + bx1) / 2 - uw / 2, underline_y, (bx0 + bx1) / 2 + uw / 2, underline_y + 4],
+                radius=2, fill=(224, 224, 230, 230))
+
+    # большой поворотный диск справа — хромированное кольцо с накаткой
+    # (радиальные насечки для хвата), тонкое лит-кольцо и тёмная грань
+    dr = dial_d // 2
+    knurl = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    kd = ImageDraw.Draw(knurl)
+    for a in range(0, 360, 8):
+        rad = math.radians(a)
+        x0 = dial_cx + (dr - 3) * math.cos(rad)
+        y0 = dial_cy + (dr - 3) * math.sin(rad)
+        x1 = dial_cx + (dr - 14) * math.cos(rad)
+        y1 = dial_cy + (dr - 14) * math.sin(rad)
+        kd.line([x0, y0, x1, y1], fill=(70, 67, 76, 255), width=2)
+    bd.ellipse([dial_cx - dr, dial_cy - dr, dial_cx + dr, dial_cy + dr],
+               fill=(32, 31, 36, 255))
+    body.alpha_composite(knurl)
+    bd = ImageDraw.Draw(body)
+    bd.ellipse([dial_cx - dr, dial_cy - dr, dial_cx + dr, dial_cy + dr],
+               outline=(130, 126, 138, 255), width=4)
+    # тонкое светящееся кольцо чуть внутри накатки — как металлическая
+    # окантовка вокруг диска на референсе
+    ring_r = dr - 16
+    ring_glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(ring_glow).ellipse(
+        [dial_cx - ring_r, dial_cy - ring_r, dial_cx + ring_r, dial_cy + ring_r],
+        outline=LED_GOLD + (int(160 * glow_k),), width=4)
+    body.alpha_composite(ring_glow.filter(ImageFilter.GaussianBlur(3)))
+    bd = ImageDraw.Draw(body)
+    bd.ellipse([dial_cx - ring_r, dial_cy - ring_r, dial_cx + ring_r, dial_cy + ring_r],
+               outline=(210, 208, 214, 200), width=2)
+    inner_r = int(dr * 0.6)
+    bd.ellipse([dial_cx - inner_r, dial_cy - inner_r, dial_cx + inner_r, dial_cy + inner_r],
+               fill=(20, 19, 23, 255), outline=(74, 70, 82, 255), width=2)
+    # риска-индикатор положения диска — статичная, всегда одно и то же место
+    notch_r0, notch_r1 = inner_r * 0.35, inner_r * 0.88
+    ang = -2.35  # фиксированный угол, "около 8 часов" — не двигается между кадрами
+    nx0, ny0 = dial_cx + notch_r0 * math.cos(ang), dial_cy + notch_r0 * math.sin(ang)
+    nx1, ny1 = dial_cx + notch_r1 * math.cos(ang), dial_cy + notch_r1 * math.sin(ang)
+    dial_glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(dial_glow).line([nx0, ny0, nx1, ny1], fill=LED_GOLD + (int(255 * glow_k),), width=4)
+    body.alpha_composite(dial_glow.filter(ImageFilter.GaussianBlur(4)))
+    bd = ImageDraw.Draw(body)
+    bd.line([nx0, ny0, nx1, ny1], fill=LED_GOLD, width=2)
+    bd.ellipse([dial_cx - 4, dial_cy - 4, dial_cx + 4, dial_cy + 4], fill=(96, 92, 104, 255))
+
+    # гравированная табличка с серийником — теперь тонкой строкой у самого
+    # низа корпуса, под панелью управления
+    plate_font = _font("RobotoCondensed-SemiBold.ttf", 18)
+    pd = ImageDraw.Draw(body)
+    pd.text((w / 2, h - 22), "COINPLAY · AI CORE  /  UNIT-07",
+            font=plate_font, fill=(110, 106, 120, 255), anchor="mm")
+
     return body, screen_mask
 
 
@@ -797,9 +1090,15 @@ def _screen_spill(out: Image.Image, device: Image.Image, screen_mask: Image.Imag
     return Image.alpha_composite(out, glow)
 
 
-def compose_frame(paper: Image.Image, table_image: str = "", seed: int = 3) -> Image.Image:
-    """Кладёт смартфон с прогнозом на стол: перспектива, светотень сцены,
-    контактная тень и засветка от экрана."""
+def compose_frame(paper: Image.Image, table_image: str = "", seed: int = 3,
+                  progress: float = 1.0) -> Image.Image:
+    """Кладёт AI-устройство с прогнозом на стол: перспектива, светотень сцены,
+    контактная тень и засветка от экрана.
+
+    `progress` (0..1) — насколько прогноз уже заполнен на этом кадре;
+    передаётся в _phone(), чтобы статусный светодиод, окошко ядра и нижняя
+    LED-полоса светились тем ярче, чем больше прибор «насчитал» — тот же
+    приём «ярче, а не по-другому», что и у полосы AI ANALYSIS на экране."""
     bg = None
     if table_image and os.path.exists(table_image):
         try:
@@ -822,7 +1121,7 @@ def compose_frame(paper: Image.Image, table_image: str = "", seed: int = 3) -> I
     # (кружка, растение), которых нет на самом кадре-якоре, начинают наезжать
     # на края листа — их просто некуда деть. 0.72 — как на референсе (лист
     # занимает ~70% ширины, сверху и по бокам видно стол).
-    device, screen_mask = _phone(paper)
+    device, screen_mask = _phone(paper, progress=progress)
     target_w = int(FRAME_W * 0.60)
     target_h = int(target_w * device.height / device.width)
     device = device.resize((target_w, target_h), Image.LANCZOS)

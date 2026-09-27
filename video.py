@@ -75,8 +75,9 @@ OPENROUTER_MODELS = {
 # табло сами, всё это просто негде сломаться.
 NEGATIVE_CYBER = (
     "hands, fingers, arms, people, pen, pencil, marker, brush, ink, ink smears, smudges, "
-    "streaks, handwriting, anything physically touching the phone, phone being picked up, "
-    "phone moving or tilting, screen turning off, notification banners, status bar changes, "
+    "streaks, handwriting, anything physically touching the device, device being picked up, "
+    "device moving or tilting, phone-like rounded body, screen turning off, notification "
+    "banners, status bar changes, "
     "camera movement, zoom, pan, "
     "shake, text changes, distorted letters, extra boxes, layout changes, moving board, "
     "watermark, ghost or duplicate digits, digits appearing before their turn, two boxes "
@@ -87,7 +88,10 @@ NEGATIVE_CYBER = (
     "into a number or percentage, progress ring or loading spinner replacing the VS badge, "
     "second percentage indicator, percentage or number appearing anywhere except next to "
     "AI ANALYSIS, glow or bloom effect on a row that is not currently being animated, glowing "
-    "orb or blob artifacts, floating badge, distorted clock or status bar icons")
+    "orb or blob artifacts, floating badge, distorted clock or status bar icons, animated fan "
+    "spinning, moving parts on the device body, rotary dial turning, buttons lighting up or "
+    "being pressed, core window flickering or changing pattern, "
+    "wifi or signal bars, network or cloud icons, cables or charging cords")
 
 # VIDEO_STYLE=marker — прежняя «рука вписывает счёт» (оставлена как запасная).
 NEGATIVE_MARKER = (
@@ -153,25 +157,32 @@ def _prompt_cyber(rows: list, first_row: int, last_row: int) -> str:
     order = "\n".join(lines)
     already = "Rows above already show their locked digits and stay untouched.\n" if first_row else ""
     return (
-        "Cinematic locked-off shot of a smartphone lying on a dark luxury desk, screen ON, showing "
-        "the \"COINPLAY AI LAB\" prediction app. Phone never moves; NO hands, people, pens or markers "
-        "ever enter frame — a screen recording of a live crypto-terminal app.\n"
+        "Cinematic locked-off shot of a dedicated black AI analysis terminal device — a standalone, "
+        "offline hardware unit that computes locally, no cloud, no network — a slim metal-edged box "
+        "with top vents, a glowing status LED, a small round glass window showing a faintly lit "
+        "chip core, and a bottom control panel of six square buttons plus one large chrome rotary "
+        "dial; not a phone. It lies on a dark luxury desk, screen ON, showing the "
+        "\"COINPLAY AI LAB\" prediction app. The device never moves; NO hands, people, pens or markers "
+        "ever enter frame — this is a screen recording of the device actively computing on its own.\n"
         "Mid-analysis, finishing during the clip: the \"AI ANALYSIS\" bar under the team names grows "
-        "left to right with a gold glow, its percentage counts up — the ONLY percentage or progress "
-        "indicator anywhere on screen. The round gold VS badge between the two flags always shows "
-        "plain \"VS\", never a number or a ring. Each model's row brightens from dim grey to white as "
-        "its score appears. Empty score boxes fill THEMSELVES, one row at a time, in this order:\n"
+        "left to right with a green neon glow, its percentage counts up — the ONLY percentage or "
+        "progress indicator anywhere on screen. The round green-outlined VS badge between the two "
+        "flags always shows plain \"VS\", never a number or a ring. Each model's row brightens from "
+        "dim grey to white as its score appears. Empty score boxes fill THEMSELVES, one row at a "
+        "time, in this order:\n"
         f"{already}{order}\n"
         "Each digit: its box lights up, numerals scramble like an odds ticker for a beat, then snap "
-        "into a glowing yellow digit with a scanline pulse and a brief bloom — the bloom stays inside "
+        "into a glowing green digit with a scanline pulse and a brief bloom — the bloom stays inside "
         "that one row, never spreading to another row or to the flag cards. Only the active box "
         "glows; later boxes stay empty and dark until their own turn. Never two boxes, or two rows, "
         "animate at once.\n"
         "Digits are clean, sharp, centred, sized to fit their box, appearing ONLY in the two boxes "
         "named above. Flag cards are static photos: no digits, no glow, pixel-identical every frame. "
-        "Everything else — phone body, title, crests, VS badge, names, icons, layout, desk — stays "
-        "perfectly still. Continuous rhythm, no idle pause. Rich blacks, gold screen light on the "
-        "desk, deep violet accents. Expensive fintech-terminal mood."
+        "Everything else — device body, vents, status LED, core window, control-panel buttons, "
+        "rotary dial, serial plate, title, crests, VS badge, names, icons, layout, desk — stays "
+        "perfectly still: the buttons never light up or get pressed, the dial never turns. "
+        "Continuous rhythm, no idle pause. Rich blacks, green neon screen light on the desk, deep "
+        "violet accents. Expensive fintech-terminal mood."
     )
 
 

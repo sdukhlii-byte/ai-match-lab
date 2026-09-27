@@ -170,6 +170,19 @@ def consensus_note(rows: list, home: str, away: str) -> str:
     return f"{n} of {len(rows)} models agree"
 
 
+def consensus_pct(rows: list, home: str, away: str) -> int:
+    """Согласие моделей в процентах — то же число, что и в consensus_note,
+    только для крупной цифры-«хиро» рядом с плашкой (round(n / total * 100)).
+
+    Реальная величина, честно посчитанная из голосов моделей — не выдуманный
+    коэффициент и не вероятность результата матча.
+    """
+    if not rows:
+        return 0
+    _, n, _, _ = _verdict(rows, home, away)
+    return round(100 * n / len(rows))
+
+
 def captions(match: dict, rows: list) -> dict:
     home, away = match["home"], match["away"]
     pick, n, top, k = _verdict(rows, home, away)
@@ -409,13 +422,15 @@ def run(match: dict, args) -> str:
         date=_pretty_date(match.get("date", "")),
         consensus=consensus_text(rows, match["home"], match["away"]),
         consensus_note=consensus_note(rows, match["home"], match["away"]),
+        consensus_pct=consensus_pct(rows, match["home"], match["away"]),
     )
     table = env_str("TABLE_IMAGE", os.path.join(HERE, "assets", "table.jpg"))
     start = min(prefill_rows(), max(0, len(rows) - 1))
     segs = _segments(len(rows), start)
-    keyframes = [poster.compose_frame(poster.render_paper(m, start), table)]
+    n_rows = max(1, len(rows))
+    keyframes = [poster.compose_frame(poster.render_paper(m, start), table, progress=start / n_rows)]
     for _, end in segs:
-        keyframes.append(poster.compose_frame(poster.render_paper(m, end), table))
+        keyframes.append(poster.compose_frame(poster.render_paper(m, end), table, progress=end / n_rows))
     blank_path = os.path.join(out_dir, "blank.jpg")
     filled_path = os.path.join(out_dir, "filled.jpg")
     keyframes[0].save(blank_path, quality=93)
