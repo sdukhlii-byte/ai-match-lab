@@ -18,10 +18,18 @@ last-frame (нужно и там, и там: см. выше почему):
 
   Через OpenRouter (openrouter.ai/docs/guides/overview/multimodal/video-generation),
   тот же OPENROUTER_API_KEY, что уже используется для прогнозов в predictions.py:
-    or-veo31lite      (по умолчанию) — google/veo-3.1-lite, $0.03/сек без звука
-                       на 720p — на 8-секундный сегмент это ~$0.24, тот же
-                       "почерк" Google Veo, что и дорогой veo31, но кратно дешевле;
-    or-seedance-fast  — bytedance/seedance-2.0-fast, ~$0.04/сек, тоже дёшево;
+    or-seedance-fast  (по умолчанию) — bytedance/seedance-2.0-fast, ~$0.04/сек.
+                       Раньше по умолчанию стоял or-veo31lite — самый дешёвый
+                       вариант, но реальные генерации показали, что он плохо
+                       держит мелкий текст и рамки: текст плывёт уже на первом
+                       кадре, проценты расползаются по всему экрану, клетка со
+                       счётом иногда превращается в сплошную заливку без цифры.
+                       Сменили на seedance-fast — сопоставимо по цене, качество
+                       на этом сценарии ещё предстоит проверить;
+    or-veo31lite      — google/veo-3.1-lite, $0.03/сек без звука на 720p — на
+                       8-секундный сегмент это ~$0.24, тот же "почерк" Google
+                       Veo, что и дорогой veo31, но кратно дешевле и, на
+                       практике, кратно менее точный с мелким текстом;
     or-seedance-mini  — bytedance/seedance-2.0-mini, ~$0.034/сек, ещё дешевле,
                        но модель меньше — качество может просесть.
 
@@ -435,7 +443,7 @@ def _payload(provider: str, first: Image.Image, last: Image.Image, prompt: str) 
 
 
 def generate_segment(first: Image.Image, last: Image.Image, prompt: str, out_path: str) -> str:
-    provider = env_str("VIDEO_PROVIDER", "or-veo31lite").lower()
+    provider = env_str("VIDEO_PROVIDER", "or-seedance-fast").lower()
     if provider in OPENROUTER_MODELS:
         model = OPENROUTER_MODELS[provider]
 

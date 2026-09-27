@@ -209,12 +209,20 @@ def ask(model: str, match: dict, web: bool, stats_block: str) -> tuple[int, int,
         "max_tokens": env_int("MAX_TOKENS", 1500, lo=200, hi=8000),
         "reasoning": _REASONING,
     }
-    temperature = env_str("TEMPERATURE", "0.4")
+    # 0.4 был слишком «жадным»: с одинаковым промптом и одной и той же
+    # реальной статистикой на входе разные модели регулярно сходились на
+    # ОДНОМ И ТОМ ЖЕ счёте (например все пять — «3-1» для явного фаворита),
+    # хотя причины в reason у каждой были свои. Это не баг пайплайна (каждая
+    # модель реально опрашивается отдельно), а следствие низкой температуры:
+    # при явном фаворите самый «типичный» счёт для такой истории один и тот
+    # же у всех моделей. Выше температура — честнее показывает реальный
+    # разброс мнений моделей, а не совпадение по одной и той же жадной моде.
+    temperature = env_str("TEMPERATURE", "0.75")
     if temperature.lower() not in ("", "none", "off"):
         try:
             body["temperature"] = float(temperature.replace(",", "."))
         except ValueError:
-            body["temperature"] = 0.4
+            body["temperature"] = 0.75
     if web and not model.startswith("perplexity/"):
         body["plugins"] = [{"id": "web", "max_results": 4}]
 
