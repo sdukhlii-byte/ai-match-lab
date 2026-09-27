@@ -437,21 +437,30 @@ def _tiny_image():
 
 def test_generate_segment_dispatches_to_openrouter(monkeypatch):
     monkeypatch.setenv("VIDEO_PROVIDER", "or-veo31lite")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     calls = []
     monkeypatch.setattr(video, "_or_submit", lambda model, prompt, first, last: calls.append(model) or "job1")
     monkeypatch.setattr(video, "_or_poll", lambda job_id: {"unsigned_urls": ["https://x/video.mp4"]})
-    monkeypatch.setattr(video, "_download", lambda url, out_path: calls.append(("dl", url, out_path)))
+    monkeypatch.setattr(video, "_download",
+                        lambda url, out_path, headers=None: calls.append(("dl", url, out_path, headers)))
     monkeypatch.setattr(video, "_run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fal не должен вызываться")))
 
     video.generate_segment(_tiny_image(), _tiny_image(), "prompt", "/tmp/out.mp4")
     assert calls[0] == "google/veo-3.1-lite"
-    assert calls[1] == ("dl", "https://x/video.mp4", "/tmp/out.mp4")
+    kind, url, out_path, headers = calls[1]
+    assert (kind, url, out_path) == ("dl", "https://x/video.mp4", "/tmp/out.mp4")
+    # Регрессия: "unsigned_urls" от OpenRouter на деле требуют тот же Bearer,
+    # что и submit/poll — без заголовка скачивание падает 401 уже ПОСЛЕ того,
+    # как генерация оплачена, и run() валится, так и не пометив матч
+    # опубликованным (отсюда был повтор одного и того же матча изо дня в день).
+    assert headers is not None
+    assert headers["Authorization"] == "Bearer test-key"
 
 
 def test_generate_segment_dispatches_to_fal(monkeypatch):
     monkeypatch.setenv("VIDEO_PROVIDER", "kling25")
     monkeypatch.setattr(video, "_run", lambda endpoint, payload: {"video": {"url": "https://x/v.mp4"}})
-    monkeypatch.setattr(video, "_download", lambda url, out_path: None)
+    monkeypatch.setattr(video, "_download", lambda url, out_path, headers=None: None)
     monkeypatch.setattr(video, "_or_submit",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("openrouter не должен вызываться")))
 

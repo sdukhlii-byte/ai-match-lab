@@ -208,9 +208,9 @@ def _video_url(result: dict) -> str:
     raise VideoError(f"fal: в ответе нет видео: {str(result)[:300]}")
 
 
-def _download(url: str, out_path: str) -> None:
+def _download(url: str, out_path: str, headers: dict | None = None) -> None:
     tmp = f"{out_path}.part"
-    with requests.get(url, stream=True, timeout=300) as r:
+    with requests.get(url, headers=headers, stream=True, timeout=300) as r:
         r.raise_for_status()
         with open(tmp, "wb") as f:
             for chunk in r.iter_content(1 << 20):
@@ -339,7 +339,12 @@ def generate_segment(first: Image.Image, last: Image.Image, prompt: str, out_pat
         def _once():
             job_id = _or_submit(model, prompt, first, last)
             result = _or_poll(job_id)
-            _download(_or_video_url(result), out_path)
+            # "unsigned_urls" — обманчивое название: это не публичная presigned-
+            # ссылка (как у fal), а собственный content-эндпоинт OpenRouter,
+            # ему всё равно нужен тот же Bearer-токен, что и на submit/poll —
+            # без заголовка отдаёт 401, и сегмент проваливается уже ПОСЛЕ того,
+            # как OpenRouter списал деньги за генерацию.
+            _download(_or_video_url(result), out_path, headers=_or_headers())
     elif provider in PROVIDERS:
         endpoint = PROVIDERS[provider]
         payload = _payload(provider, first, last, prompt)
